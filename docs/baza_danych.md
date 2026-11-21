@@ -1,68 +1,69 @@
+```mermaid
 erDiagram
-    CASES ||--o{ CASE_DEPARTMENTS : "kierowana do"
-    DEPARTMENTS ||--o{ CASE_DEPARTMENTS : "uczestniczy w"
+    CASES ||--o{ CASE_DEPARTMENTS : "kierowana_do"
+    DEPARTMENTS ||--o{ CASE_DEPARTMENTS : "uczestniczy_w"
     CASES ||--o{ DOCUMENTS : "zawiera"
-    CASES ||--o{ RESPONSE_DRAFTS : "posiada wersje"
-    RESPONSE_DRAFTS ||--o{ ANONYMIZATION_ITEMS : "ma sugestie"
-    CASES ||--o| CASES_FTS : "indeksowane w"
+    CASES ||--o{ RESPONSE_DRAFTS : "posiada_wersje"
+    RESPONSE_DRAFTS ||--o{ ANONYMIZATION_ITEMS : "ma_sugestie"
+    CASES ||--o| CASES_FTS : "indeksowane_w"
 
-    LEGAL_RULES ||--o| LEGAL_RULES_FTS : "indeksowane w"
+    LEGAL_RULES ||--o| LEGAL_RULES_FTS : "indeksowane_w"
     ANONYMIZATION_CATEGORIES ||--o{ ANONYMIZATION_ITEMS : "kategoryzuje"
 
     CASES {
         int id PK
-        int lp "Lp. z rejestru"
-        text case_number UK "Numer sprawy (np. BKS.IV.1431.590.2026)"
-        int year "Rok sprawy"
-        text applicant "Wnioskodawca"
-        text subject "Przedmiot zapytania"
-        text extracted_text "Treść wniosku"
-        date received_date "Data wpływu"
-        date deadline_date "Wyznaczony termin (parsowany)"
-        text raw_deadline_text "Oryginalny zapis terminu z Excela/pisma"
-        text date_parse_warning "Ostrzeżenie walidatora dat"
-        date response_date "Faktyczna data odpowiedzi"
-        text assignee "Osoba odpowiedzialna"
-        text status "Status toku sprawy"
-        text procedure_mode "zwykla | bip | przetworzona | odmowa | nie_dysponent"
-        bool is_in_knowledge_base "Czy sprawa służy jako wzorzec w bazie wiedzy"
+        int lp
+        string case_number
+        int year
+        string applicant
+        string subject
+        string extracted_text
+        date received_date
+        date deadline_date
+        string raw_deadline_text
+        string date_parse_warning
+        date response_date
+        string assignee
+        string status
+        string procedure_mode
+        bool is_in_knowledge_base
         datetime updated_at
     }
 
     LEGAL_RULES {
         int id PK
-        text rule_code UK "Kod reguły (np. UDIP_ART_13_2, ZARZ_535_2024)"
-        text category "ustawa | zarzadzenie | instrukcja_bip | wzor_klauzuli"
-        text title "Tytuł aktu / reguły"
-        text legal_basis "Aktualny publikator (np. Dz. U. z 2022 r. poz. 902, z 2025 r. poz. 1844)"
-        text content "Treść przepisu, procedury lub gotowej formułki do pism"
-        text source_url "Link do ISAP / BIP UMB"
-        date effective_from "Data obowiązywania od"
-        bool is_active "Czy aktywna w promptach i walidacji"
-        text updated_by "Kto zmodyfikował w urzędzie"
+        string rule_code
+        string category
+        string title
+        string legal_basis
+        string content
+        string source_url
+        date effective_from
+        bool is_active
+        string updated_by
         datetime updated_at
     }
 
     ANONYMIZATION_CATEGORIES {
         int id PK
-        int code UK "Numer kategorii (1..28+)"
-        text name "Nazwa kategorii (edytowalna przez urząd)"
-        text legal_basis "Podstawa prawna wyłączenia (np. art. 5 ust. 2 UDIP)"
-        text regex_pattern "Opcjonalny wzorzec regex dla twardych danych"
-        text detection_hint "Wskazówka kontekstowa dla LLM / urzędnika"
-        text default_mask "Domyślna maska zaczernienia"
-        bool is_active "Czy aktywna"
+        int code
+        string name
+        string legal_basis
+        string regex_pattern
+        string detection_hint
+        string default_mask
+        bool is_active
         datetime updated_at
     }
 
     DEPARTMENTS {
         int id PK
-        text code UK "Symbol komórki (np. BKS, WAB, WSO)"
-        text name "Nazwa Wydziału lub Biura UMB (edytowalna)"
-        text unit_type "wydzial | biuro"
-        text keywords "Słowa kluczowe kompetencji"
-        text email "Adres kontaktowy komórki"
-        bool is_active "Czy aktywna (obsługa likwidacji/zmian wydziałów)"
+        string code
+        string name
+        string unit_type
+        string keywords
+        string email
+        bool is_active
         datetime updated_at
     }
 
@@ -70,8 +71,8 @@ erDiagram
         int id PK
         int case_id FK
         int department_id FK
-        text request_template
-        text dept_status
+        string request_template
+        string dept_status
         datetime updated_at
     }
 
@@ -79,10 +80,10 @@ erDiagram
         int id PK
         int case_id FK
         int department_id FK
-        text doc_role
-        text original_filename
-        text storage_path
-        text extracted_text
+        string doc_role
+        string original_filename
+        string storage_path
+        string extracted_text
         datetime uploaded_at
     }
 
@@ -90,8 +91,8 @@ erDiagram
         int id PK
         int case_id FK
         int version
-        text raw_content
-        text anonymized_content
+        string raw_content
+        string anonymized_content
         bool is_final
         datetime created_at
     }
@@ -100,26 +101,27 @@ erDiagram
         int id PK
         int draft_id FK
         int category_id FK
-        text detection_source
-        text original_text
-        text replacement_mask
+        string detection_source
+        string original_text
+        string replacement_mask
         int start_offset
         int end_offset
-        text state
+        string state
     }
 
     CASES_FTS {
-        int case_id "UNINDEXED"
-        text case_number
-        text subject
-        text extracted_text
-        text final_response_text
+        int case_id
+        string case_number
+        string subject
+        string extracted_text
+        string final_response_text
     }
 
     LEGAL_RULES_FTS {
-        int rule_id "UNINDEXED"
-        text rule_code
-        text title
-        text legal_basis
-        text content
+        int rule_id
+        string rule_code
+        string title
+        string legal_basis
+        string content
     }
+```
