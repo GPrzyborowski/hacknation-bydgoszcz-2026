@@ -1,121 +1,100 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useEffect, useState } from 'react'
+import { getHealth, type Health } from './lib/api'
+import { hrefFor, useRoute, type Route } from './lib/router'
+import { CaseView } from './views/CaseView'
+import { IntakeView } from './views/IntakeView'
+import { KnowledgeView } from './views/KnowledgeView'
+import { RegisterView } from './views/RegisterView'
 import './App.css'
+import './views.css'
+
+const TABS: { route: Route; label: string; match: Route['name'][] }[] = [
+  { route: { name: 'intake' }, label: 'Nowy wniosek', match: ['intake'] },
+  { route: { name: 'register' }, label: 'Rejestr wniosków', match: ['register', 'case'] },
+  { route: { name: 'knowledge' }, label: 'Baza wiedzy', match: ['knowledge'] },
+]
 
 function App() {
-  const [count, setCount] = useState(0)
+  const route = useRoute()
+  const [health, setHealth] = useState<Health | null>(null)
+  const [backendDown, setBackendDown] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    getHealth()
+      .then((h) => alive && setHealth(h))
+      .catch(() => alive && setBackendDown(true))
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const wide = route.name === 'register' || route.name === 'case' || route.name === 'knowledge'
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="page">
+      <a className="skip-link" href="#tresc">
+        Przejdź do treści
+      </a>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+      <header className="topbar">
+        <div className="container container-wide topbar-inner">
+          <div className="brand">
+            <span className="brand-name">Asystent UDIP</span>
+            <span className="brand-org">Urząd Miasta Bydgoszczy</span>
+          </div>
+          {health && (
+            <span
+              className="badge-local"
+              title={
+                health.llm_enabled
+                  ? 'Treść wniosków jest analizowana przez model Google Gemini — używaj danych testowych.'
+                  : 'Brak klucza Gemini — analiza regułowa'
+              }
+            >
+              {health.llm_enabled ? `Model: ${health.model}` : 'Bez modelu (analiza regułowa)'}
+            </span>
+          )}
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
+        <nav className="tabs" aria-label="Sekcje">
+          <div className="container container-wide tabs-inner">
+            {TABS.map((tab) => {
+              const current = tab.match.includes(route.name)
+              return (
+                <a
+                  key={tab.label}
+                  href={hrefFor(tab.route)}
+                  className={`tab${current ? ' is-current' : ''}`}
+                  aria-current={current ? 'page' : undefined}
                 >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+                  {tab.label}
+                </a>
+              )
+            })}
+          </div>
+        </nav>
+      </header>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <main id="tresc" className={`container main${wide ? ' container-wide' : ''}`}>
+        {backendDown && (
+          <div className="notice notice-error" role="alert">
+            <p>
+              <strong>Brak połączenia z serwerem aplikacji.</strong> Uruchom backend (docker compose up) i odśwież stronę.
+            </p>
+          </div>
+        )}
+        {route.name === 'intake' && <IntakeView />}
+        {route.name === 'register' && <RegisterView />}
+        {route.name === 'case' && <CaseView key={route.id} id={route.id} />}
+        {route.name === 'knowledge' && <KnowledgeView />}
+      </main>
+
+      <footer className="footer">
+        <div className={`container${wide ? ' container-wide' : ''}`}>
+          Narzędzie pomocnicze · nic nie jest wysyłane automatycznie do wydziałów ani wnioskodawców
+        </div>
+      </footer>
+    </div>
   )
 }
 

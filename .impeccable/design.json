@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-21T12:00:00Z",
+  "title": "Design System: Asystent UDIP",
+  "extensions": {
+    "colorMeta": {
+      "bg": { "role": "neutral", "displayName": "Paper White", "canonical": "#ffffff", "tonalRamp": ["#1b1b1b", "#33373a", "#4b5257", "#7a8086", "#b8bdc2", "#dde0e3", "#f2f2f2", "#ffffff"] },
+      "surface-muted": { "role": "neutral", "displayName": "Office Grey", "canonical": "#f2f2f2", "tonalRamp": ["#1b1b1b", "#33373a", "#4b5257", "#7a8086", "#b8bdc2", "#dde0e3", "#f2f2f2", "#ffffff"] },
+      "surface-tint": { "role": "neutral", "displayName": "Pale Registry Blue", "canonical": "#eef3f9", "tonalRamp": ["#0a1f38", "#002e5c", "#003d7a", "#0052a5", "#3d7cc0", "#8fb0d6", "#cddcee", "#eef3f9"] },
+      "tint-border": { "role": "neutral", "displayName": "Registry Blue Edge", "canonical": "#b9cbe0", "tonalRamp": ["#0a1f38", "#002e5c", "#003d7a", "#0052a5", "#3d7cc0", "#8fb0d6", "#b9cbe0", "#eef3f9"] },
+      "text": { "role": "neutral", "displayName": "Ink", "canonical": "#1b1b1b", "tonalRamp": ["#1b1b1b", "#33373a", "#4b5257", "#7a8086", "#b8bdc2", "#dde0e3", "#f2f2f2", "#ffffff"] },
+      "text-secondary": { "role": "neutral", "displayName": "Slate", "canonical": "#4b5257", "tonalRamp": ["#1b1b1b", "#33373a", "#4b5257", "#7a8086", "#b8bdc2", "#dde0e3", "#f2f2f2", "#ffffff"] },
+      "rule": { "role": "neutral", "displayName": "Rule Grey", "canonical": "#b8bdc2", "tonalRamp": ["#1b1b1b", "#33373a", "#4b5257", "#7a8086", "#b8bdc2", "#dde0e3", "#f2f2f2", "#ffffff"] },
+      "rule-light": { "role": "neutral", "displayName": "Light Rule", "canonical": "#dde0e3", "tonalRamp": ["#1b1b1b", "#33373a", "#4b5257", "#7a8086", "#b8bdc2", "#dde0e3", "#f2f2f2", "#ffffff"] },
+      "accent": { "role": "primary", "displayName": "Institutional Blue", "canonical": "#0052a5", "tonalRamp": ["#0a1f38", "#002e5c", "#003d7a", "#0052a5", "#3d7cc0", "#8fb0d6", "#cddcee", "#eef3f9"] },
+      "accent-hover": { "role": "primary", "displayName": "Deep Institutional Blue", "canonical": "#003d7a", "tonalRamp": ["#0a1f38", "#002e5c", "#003d7a", "#0052a5", "#3d7cc0", "#8fb0d6", "#cddcee", "#eef3f9"] },
+      "accent-active": { "role": "primary", "displayName": "Darkest Institutional Blue", "canonical": "#002e5c", "tonalRamp": ["#0a1f38", "#002e5c", "#003d7a", "#0052a5", "#3d7cc0", "#8fb0d6", "#cddcee", "#eef3f9"] },
+      "accent-tint": { "role": "primary", "displayName": "Blue Wash", "canonical": "#e5edf6", "tonalRamp": ["#0a1f38", "#002e5c", "#003d7a", "#0052a5", "#3d7cc0", "#8fb0d6", "#cddcee", "#e5edf6"] },
+      "success": { "role": "tertiary", "displayName": "Registry Green", "canonical": "#00703c", "tonalRamp": ["#00341c", "#00532d", "#00703c", "#2f8f5f", "#6fb38f", "#a9d3bb", "#d3eadd", "#e9f4ee"] },
+      "success-tint": { "role": "tertiary", "displayName": "Green Wash", "canonical": "#e9f4ee", "tonalRamp": ["#00341c", "#00532d", "#00703c", "#2f8f5f", "#6fb38f", "#a9d3bb", "#d3eadd", "#e9f4ee"] },
+      "warning": { "role": "tertiary", "displayName": "Amber Text", "canonical": "#8a4b00", "tonalRamp": ["#3d2100", "#6a3a00", "#8a4b00", "#c27c00", "#dba33f", "#ecc983", "#f8e6b8", "#fff6e0"] },
+      "warning-border": { "role": "tertiary", "displayName": "Amber Edge", "canonical": "#c27c00", "tonalRamp": ["#3d2100", "#6a3a00", "#8a4b00", "#c27c00", "#dba33f", "#ecc983", "#f8e6b8", "#fff6e0"] },
+      "warning-tint": { "role": "tertiary", "displayName": "Amber Wash", "canonical": "#fff6e0", "tonalRamp": ["#3d2100", "#6a3a00", "#8a4b00", "#c27c00", "#dba33f", "#ecc983", "#f8e6b8", "#fff6e0"] },
+      "danger": { "role": "tertiary", "displayName": "Official Red", "canonical": "#b3261e", "tonalRamp": ["#4d0f0c", "#801b15", "#b3261e", "#c9554e", "#dc8984", "#ecb9b5", "#f6dcda", "#fcefee"] },
+      "danger-tint": { "role": "tertiary", "displayName": "Red Wash", "canonical": "#fcefee", "tonalRamp": ["#4d0f0c", "#801b15", "#b3261e", "#c9554e", "#dc8984", "#ecb9b5", "#f6dcda", "#fcefee"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "The page h1, one per screen; 27px under 640px." },
+      "title": { "displayName": "Title", "purpose": "Section headings such as 'Jak to działa'; the confirmation heading sits at 26px." },
+      "readout": { "displayName": "Readout", "purpose": "Key values read at a glance: the computed deadline date; also the header product name." },
+      "label": { "displayName": "Label", "purpose": "Form field labels and the dropzone title." },
+      "lead": { "displayName": "Lead", "purpose": "The one introductory paragraph under the h1, max 62ch; 17px under 640px." },
+      "button": { "displayName": "Button", "purpose": "Primary and secondary button text; step titles." },
+      "body": { "displayName": "Body", "purpose": "Default reading text; hints capped at 75ch." },
+      "body-sm": { "displayName": "Body small", "purpose": "Hints, metadata, file sizes, stepper label, footer." },
+      "caption": { "displayName": "Caption", "purpose": "Label above the deadline date and the header status tag." }
+    },
+    "shadows": [],
+    "focus": [
+      { "name": "focus-ring", "value": "outline: 3px solid #0052a5; outline-offset: 2px", "purpose": "Global :focus-visible treatment on every focusable element." }
+    ],
+    "borders": [
+      { "name": "field", "value": "2px solid #1b1b1b", "purpose": "Text and date inputs." },
+      { "name": "header-rule", "value": "4px solid #0052a5", "purpose": "Bottom edge of the header." },
+      { "name": "divider", "value": "1px solid #b8bdc2", "purpose": "Between file rows, summary rows, sections, above the footer." },
+      { "name": "dropzone", "value": "2px dashed #4b5257", "purpose": "The only dashed border in the system." }
+    ],
+    "motion": [
+      { "name": "state-change", "value": "0.15s ease-out", "purpose": "Background, border and colour transitions on buttons and the dropzone." },
+      { "name": "spinner", "value": "0.8s linear infinite", "purpose": "Upload spinner rotation; static ring under reduced motion." }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "640px" }
+    ],
+    "layout": [
+      { "name": "container", "value": "max-width 880px, 32px gutters (16px at 640px and below)" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action per form; left-aligned, stays enabled and surfaces inline errors on press.",
+      "html": "<button class=\"ds-btn-primary\">Analizuj wniosek</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 10px 24px; border: 2px solid var(--accent, #0052a5); border-radius: 4px; background: var(--accent, #0052a5); color: #fff; font: 600 17px/1.5 'Segoe UI', system-ui, sans-serif; cursor: pointer; transition: background-color 0.15s ease-out, color 0.15s ease-out; } .ds-btn-primary:hover { border-color: var(--accent-hover, #003d7a); background: var(--accent-hover, #003d7a); } .ds-btn-primary:active { background: var(--accent-active, #002e5c); } .ds-btn-primary:focus-visible { outline: 3px solid #0052a5; outline-offset: 2px; } .ds-btn-primary:disabled { border-color: #dde0e3; background: #dde0e3; color: #4b5257; cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Outlined blue recovery action, used inside notices (retry).",
+      "html": "<button class=\"ds-btn-secondary\">Spróbuj ponownie</button>",
+      "css": ".ds-btn-secondary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 24px; border: 2px solid var(--accent, #0052a5); border-radius: 4px; background: #fff; color: var(--accent, #0052a5); font: 600 17px/1.5 'Segoe UI', system-ui, sans-serif; cursor: pointer; transition: background-color 0.15s ease-out; } .ds-btn-secondary:hover { background: var(--accent-tint, #e5edf6); } .ds-btn-secondary:focus-visible { outline: 3px solid #0052a5; outline-offset: 2px; }"
+    },
+    {
+      "name": "Link Button",
+      "kind": "button",
+      "refersTo": "button-link",
+      "description": "Underlined text action for low-stakes list actions.",
+      "html": "<button class=\"ds-btn-link\">Wyczyść</button>",
+      "css": ".ds-btn-link { padding: 4px 0; border: none; background: none; color: var(--accent, #0052a5); font: 600 16px/1.5 'Segoe UI', system-ui, sans-serif; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; } .ds-btn-link:hover { color: var(--accent-hover, #003d7a); text-decoration-thickness: 2px; } .ds-btn-link:focus-visible { outline: 3px solid #0052a5; outline-offset: 2px; }"
+    },
+    {
+      "name": "Date Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Labelled field with hint: 2px ink border, square corners, strong blue focus.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field-label\" for=\"ds-date\">Data wpływu</label><p class=\"ds-field-hint\">Dzień, w którym wniosek wpłynął do urzędu.</p><input id=\"ds-date\" class=\"ds-input\" type=\"date\" value=\"2026-11-09\"></div>",
+      "css": ".ds-field { display: flex; flex-direction: column; gap: 8px; font: 16px/1.5 'Segoe UI', system-ui, sans-serif; color: #1b1b1b; } .ds-field-label { font-size: 19px; font-weight: 700; line-height: 1.3; } .ds-field-hint { margin: 0; color: #4b5257; } .ds-input { width: 200px; height: 48px; padding: 8px 10px; border: 2px solid #1b1b1b; border-radius: 0; background: #fff; color: #1b1b1b; font: inherit; font-variant-numeric: tabular-nums; } .ds-input:focus-visible { outline: 3px solid #0052a5; outline-offset: 2px; } .ds-input[aria-invalid=\"true\"] { border-color: #b3261e; } .ds-input:disabled { background: #f2f2f2; color: #4b5257; }"
+    },
+    {
+      "name": "Deadline Readout",
+      "kind": "custom",
+      "refersTo": "deadline-readout",
+      "description": "Signature: the statutory deadline bound live to the date field; blue default, amber when near, red when late.",
+      "html": "<div class=\"ds-deadline\"><span class=\"ds-deadline-label\">Termin odpowiedzi</span><span class=\"ds-deadline-date\">23 listopada 2026, poniedziałek</span><span class=\"ds-deadline-meta\">14 dni od daty wpływu (art. 13 ust. 1 u.d.i.p.) · zostało 9 dni</span></div><div class=\"ds-deadline ds-is-near\"><span class=\"ds-deadline-label\">Termin odpowiedzi</span><span class=\"ds-deadline-date\">23 listopada 2026, poniedziałek</span><span class=\"ds-deadline-meta\">2 dni do upływu terminu</span></div>",
+      "css": ".ds-deadline { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; padding: 12px 18px; background: var(--surface-tint, #eef3f9); border: 1px solid var(--tint-border, #b9cbe0); border-radius: 4px; font: 16px/1.5 'Segoe UI', system-ui, sans-serif; color: #1b1b1b; } .ds-deadline-label { font-size: 14px; color: #4b5257; } .ds-deadline-date { font-size: 21px; font-weight: 700; line-height: 1.3; font-variant-numeric: tabular-nums; } .ds-deadline-meta { font-size: 15px; font-variant-numeric: tabular-nums; } .ds-deadline.ds-is-near { background: #fff6e0; border-color: #c27c00; } .ds-deadline.ds-is-near .ds-deadline-meta { color: #8a4b00; font-weight: 600; } .ds-deadline.ds-is-late { background: #fcefee; border-color: #b3261e; } .ds-deadline.ds-is-late .ds-deadline-meta { color: #b3261e; font-weight: 600; }"
+    },
+    {
+      "name": "Dropzone",
+      "kind": "custom",
+      "refersTo": "dropzone",
+      "description": "The only dashed element: grey drop area that turns blue on hover and solid blue while dragging.",
+      "html": "<div class=\"ds-dropzone\" role=\"button\" tabindex=\"0\"><svg class=\"ds-dropzone-icon\" viewBox=\"0 0 48 48\" aria-hidden=\"true\"><path d=\"M14 6h14l10 10v24a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linejoin=\"round\"/><path d=\"M28 6v10h10\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linejoin=\"round\"/><path d=\"M25 36V22m-6 6 6-6 6 6\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><div><p class=\"ds-dropzone-title\">Przeciągnij i upuść wniosek tutaj</p><p class=\"ds-dropzone-sub\">lub <span class=\"ds-dropzone-link\">wybierz plik z dysku</span></p><p class=\"ds-dropzone-hint\">PDF, DOC lub DOCX · do 20 MB na plik</p></div></div>",
+      "css": ".ds-dropzone { display: flex; align-items: center; gap: 20px; padding: 24px 28px; border: 2px dashed #4b5257; border-radius: 4px; background: #f2f2f2; color: #1b1b1b; font: 16px/1.5 'Segoe UI', system-ui, sans-serif; cursor: pointer; transition: border-color 0.15s ease-out, background-color 0.15s ease-out; } .ds-dropzone p { margin: 0; } .ds-dropzone:hover { border-color: #0052a5; background: #e5edf6; } .ds-dropzone:focus-visible { outline: 3px solid #0052a5; outline-offset: 2px; } .ds-dropzone-icon { flex: none; width: 48px; height: 48px; color: #0052a5; } .ds-dropzone-title { font-size: 19px; font-weight: 700; line-height: 1.3; } .ds-dropzone-sub { margin-top: 2px; } .ds-dropzone-link { color: #0052a5; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; } .ds-dropzone:hover .ds-dropzone-link { color: #003d7a; text-decoration-thickness: 2px; } .ds-dropzone-hint { margin-top: 6px; font-size: 15px; color: #4b5257; }"
+    },
+    {
+      "name": "File Row",
+      "kind": "custom",
+      "refersTo": "file-row",
+      "description": "Ruled list row: radio and role, extension tag, truncated filename, tabular size, remove button; selected row tinted.",
+      "html": "<ul class=\"ds-files\"><li class=\"ds-file-row ds-is-main\"><input class=\"ds-radio\" type=\"radio\" name=\"ds-main\" checked><span class=\"ds-file-role\">Wniosek</span><span class=\"ds-file-ext\">PDF</span><span class=\"ds-file-name\">wniosek_dotacje_2026.pdf</span><span class=\"ds-file-size\">214 KB</span><button class=\"ds-icon-btn\" aria-label=\"Usuń\"><svg viewBox=\"0 0 20 20\" aria-hidden=\"true\"><path d=\"M5 5l10 10M15 5L5 15\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg></button></li><li class=\"ds-file-row\"><input class=\"ds-radio\" type=\"radio\" name=\"ds-main\"><span class=\"ds-file-role\">Załącznik</span><span class=\"ds-file-ext\">DOCX</span><span class=\"ds-file-name\">pelnomocnictwo.docx</span><span class=\"ds-file-size\">48 KB</span><button class=\"ds-icon-btn\" aria-label=\"Usuń\"><svg viewBox=\"0 0 20 20\" aria-hidden=\"true\"><path d=\"M5 5l10 10M15 5L5 15\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg></button></li></ul>",
+      "css": ".ds-files { list-style: none; margin: 0; padding: 0; border-top: 1px solid #b8bdc2; font: 16px/1.5 'Segoe UI', system-ui, sans-serif; color: #1b1b1b; accent-color: #0052a5; } .ds-file-row { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 8px 8px 12px; border-bottom: 1px solid #b8bdc2; } .ds-file-row.ds-is-main { background: #eef3f9; } .ds-radio { width: 22px; height: 22px; margin: 0; } .ds-file-role { min-width: 84px; color: #4b5257; } .ds-is-main .ds-file-role { font-weight: 700; color: #1b1b1b; } .ds-file-ext { width: 48px; font-size: 13px; font-weight: 600; color: #4b5257; } .ds-file-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-file-size { font-size: 15px; color: #4b5257; font-variant-numeric: tabular-nums; } .ds-icon-btn { display: grid; place-items: center; width: 40px; height: 40px; border: none; border-radius: 4px; background: none; color: #4b5257; cursor: pointer; } .ds-icon-btn svg { width: 18px; height: 18px; } .ds-icon-btn:hover { background: #fcefee; color: #b3261e; } .ds-icon-btn:focus-visible { outline: 3px solid #0052a5; outline-offset: 2px; }"
+    },
+    {
+      "name": "Notice",
+      "kind": "card",
+      "refersTo": "notice-warning",
+      "description": "Bordered status box: amber for skipped files, red for errors with a retry action.",
+      "html": "<div class=\"ds-notice ds-notice-warning\"><strong>Pominięto 1 plik:</strong><ul><li><span class=\"ds-notice-file\">skan.jpg</span> — nieobsługiwany format</li></ul></div><div class=\"ds-notice ds-notice-error\"><p><strong>Nie udało się przesłać plików.</strong> Serwer nie odpowiada.</p><p>Pliki pozostały na liście — możesz spróbować ponownie.</p></div>",
+      "css": ".ds-notice { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 12px; padding: 14px 18px; border: 2px solid; border-radius: 4px; font: 16px/1.5 'Segoe UI', system-ui, sans-serif; color: #1b1b1b; } .ds-notice p, .ds-notice ul { margin: 0; } .ds-notice ul { padding-left: 20px; } .ds-notice-file { font-weight: 600; } .ds-notice-warning { border-color: #c27c00; background: #fff6e0; } .ds-notice-error { border-color: #b3261e; background: #fcefee; } .ds-notice-error strong { color: #b3261e; }"
+    },
+    {
+      "name": "Stepper",
+      "kind": "nav",
+      "refersTo": "stepper-segment",
+      "description": "Step label above four flat 6px bars; done and current bars in institutional blue.",
+      "html": "<nav class=\"ds-stepper\" aria-label=\"Etapy\"><p class=\"ds-stepper-label\">Krok 1 z 4: <strong>Wgraj wniosek</strong></p><ol><li class=\"ds-is-current\" aria-current=\"step\"></li><li></li><li></li><li></li></ol></nav>",
+      "css": ".ds-stepper { font: 16px/1.5 'Segoe UI', system-ui, sans-serif; } .ds-stepper-label { margin: 0; font-size: 15px; color: #4b5257; } .ds-stepper-label strong { color: #1b1b1b; } .ds-stepper ol { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; } .ds-stepper li { height: 6px; background: #dde0e3; } .ds-stepper li.ds-is-current, .ds-stepper li.ds-is-done { background: #0052a5; }"
+    },
+    {
+      "name": "Header Bar",
+      "kind": "nav",
+      "description": "White header with product and organisation name, closed by a 4px institutional blue rule; no logo.",
+      "html": "<header class=\"ds-topbar\"><div class=\"ds-brand\"><span class=\"ds-brand-name\">Asystent UDIP</span><span class=\"ds-brand-org\">Urząd Miasta Bydgoszczy</span></div></header>",
+      "css": ".ds-topbar { display: flex; align-items: center; min-height: 72px; padding: 14px 32px; background: #fff; border-bottom: 4px solid #0052a5; font: 16px/1.5 'Segoe UI', system-ui, sans-serif; color: #1b1b1b; } .ds-brand { display: flex; flex-direction: column; } .ds-brand-name { font-size: 21px; font-weight: 700; line-height: 1.2; } .ds-brand-org { font-size: 15px; color: #4b5257; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Public Counter Form",
+    "overview": "The system is the Polish e-government intake form, played straight and built to gov.pl / mObywatel craft. It reads like a well-made public-administration service: a white page, near-black text, one institutional blue that means \"act here\", and form fields with strong, unmistakable edges. The official is at a desk in a daylight office doing routine procedural work, so the interface stays calm, legible and literal. Nothing decorates; every visible element is a label, a field, a status or an action.\n\nDensity is moderate and generous at once: a single centred column, large labels (19px bold), 16px body with 1.5 leading, and 28px between form fields. Hierarchy comes from size and weight, never from colour or ornament. Colour beyond the blue appears only to report an outcome: green for accepted, red for error or a missed deadline, amber for a near deadline or skipped files.\n\nThe convention is the point. The system refuses the SaaS look (soft floating cards, pill badges, icon tiles, nested dashed cards, shadows) while keeping every e-government convention intact: a header with a heavy blue rule, a segmented step indicator, numbered step circles, bordered status notices, a grey footer band. It follows those conventions without copying any gov.pl or mObywatel logo, emblem or branding. The scheme is light-only by design (`color-scheme: light`).",
+    "keyCharacteristics": [
+      "White ground, near-black text, one institutional blue for actions, links, focus and the header rule.",
+      "2px near-black input borders with square corners; nothing rounder than 4px except true circles.",
+      "Flat: no shadows anywhere; depth is borders, 1px rules and tinted fills.",
+      "Outcome colours (green, red, amber) report state and never decorate.",
+      "3px blue focus outline with 2px offset on every focusable element.",
+      "Dates, sizes and counts always set in tabular figures."
+    ],
+    "rules": [
+      { "name": "The One Blue Rule", "body": "Institutional Blue is the only hue that invites action. There is no second accent; links, buttons, focus and the header rule all share it.", "section": "colors" },
+      { "name": "The Outcome Only Rule", "body": "Green, red and amber appear only to report a state (accepted, error or late, near deadline or skipped). They never decorate, never tint a heading and never carry branding.", "section": "colors" },
+      { "name": "The Tabular Figures Rule", "body": "Every date, deadline, file size, count and register number uses `font-variant-numeric: tabular-nums`, so numbers line up and never jitter as they update.", "section": "typography" },
+      { "name": "The Weight Not Colour Rule", "body": "Hierarchy is carried by size and weight. Headings are Ink, never blue; emphasis inside a status uses bold, not a new colour.", "section": "typography" },
+      { "name": "The Flat Page Rule", "body": "No `box-shadow` on any surface or control. If something needs to stand apart, give it a border or a tinted fill.", "section": "elevation" },
+      { "name": "The Square Ground Rule", "body": "Nothing rounder than 4px unless it is a true circle. No pills.", "section": "shapes" },
+      { "name": "The One Dash Rule", "body": "A dashed border means \"drop files here\". It is used by the dropzone and nowhere else, and it is never nested inside another bordered box.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do use Institutional Blue (#0052a5) for every action, link, focus outline and the header rule, and for nothing decorative.",
+      "Do give every text input a 2px Ink border with square corners and the 3px blue focus outline at 2px offset.",
+      "Do keep all radii at 4px or 0, except true circles (radios, step numbers, success check, spinner).",
+      "Do show errors inline: red bold message above the control, red border on the control, focus moved to the first invalid field.",
+      "Do set dates, sizes, counts and register numbers in tabular figures.",
+      "Do keep the deadline visible wherever a request appears, using the deadline readout with its blue, amber and red tones.",
+      "Do separate regions with 1px Rule Grey dividers, 2px borders or tinted fills.",
+      "Do follow e-government conventions (heavy header rule, segmented stepper, numbered step circles, bordered notices, grey footer band) at gov.pl / mObywatel craft."
+    ],
+    "donts": [
+      "Don't copy or imitate gov.pl, mObywatel or city logos, emblems or branding, and don't invent a logo.",
+      "Don't add a second accent hue or use outcome colours (green, red, amber) as decoration.",
+      "Don't use shadows, floating cards, pill badges or icon tiles.",
+      "Don't use a dashed border anywhere but the dropzone, and never nest a dashed box inside another bordered box.",
+      "Don't colour headings blue or add uppercase letter-spaced labels above headings.",
+      "Don't disable the primary submit button to signal an incomplete form; let it surface the errors.",
+      "Don't introduce a dark theme; the system is light-only by design."
+    ]
+  }
+}
