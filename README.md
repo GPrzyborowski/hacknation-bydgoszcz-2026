@@ -1,0 +1,1 @@
+# Hacknation Bydgoszcz 2026
