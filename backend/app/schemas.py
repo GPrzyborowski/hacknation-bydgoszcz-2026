@@ -123,9 +123,46 @@ class CaseListItem(BaseModel):
     days_remaining: int | None = Field(description="Dni do terminu; 0 dla spraw zakończonych (jak w rejestrze UMB).")
     answered_on_time: bool | None = Field(None, description="Dla spraw zakończonych: czy odpowiedź udzielona w terminie.")
     deadline_note: str | None = None
+    original_deadline_date: str | None = Field(None, description="Termin 14-dniowy (przed przedłużeniem).")
+    extension_days: int = Field(0, description="O ile dni przedłużono termin (kwerenda / doprecyzowanie).")
+    max_deadline_date: str | None = Field(None, description="Najpóźniejszy dopuszczalny termin: 2 miesiące od wpływu (art. 13 ust. 2).")
+    dept_total: int = 0
+    dept_answered: int = 0
+    dept_waiting: list[str] = []
+    dept_clarification: list[str] = []
     urgency: Literal["overdue", "today", "tomorrow", "soon", "normal", "done"] = Field(
         description="Podświetlenie w kalendarzu: overdue (po terminie), today, tomorrow, soon (≤3 dni), normal, done."
     )
+
+
+class DepartmentStatusOut(BaseModel):
+    code: str
+    name: str
+    status: Literal["oczekuje", "odpowiedzial", "uszczegolowienie"]
+    status_label: str
+    requested_at: str | None
+    answered_at: str | None
+    clarification_count: int
+    note: str | None
+
+
+class DepartmentAdd(BaseModel):
+    code: str
+
+
+class DepartmentStatusUpdate(BaseModel):
+    status: Literal["oczekuje", "odpowiedzial", "uszczegolowienie"]
+    note: str | None = None
+
+
+class ClarificationIn(BaseModel):
+    details: str | None = Field(None, description="Czego brakuje w odpowiedzi wydziału.")
+
+
+class ClarificationOut(BaseModel):
+    code: str
+    text: str = Field(description="Treść prośby do wydziału — do skopiowania i wysłania przez urzędnika.")
+    departments: list[DepartmentStatusOut]
 
 
 class DepartmentReplyOut(BaseModel):
@@ -167,6 +204,7 @@ class CaseDetail(CaseListItem):
     request_text: str | None = None
     parsed_request: dict | None = None
     response_text: str | None = None
+    department_status: list[DepartmentStatusOut] = []
     documents: list[CaseDocument] = []
     department_replies: list[DepartmentReplyOut] = []
     drafts: list[DraftOut] = []
@@ -262,6 +300,7 @@ class DepartmentReplyResponse(BaseModel):
     status: CaseStatus
     kind: str = "odpowiedz"
     deadline_date: str | None = None
+    warning: str | None = None
     draft_id: int
     draft_text: str
     llm_used: bool

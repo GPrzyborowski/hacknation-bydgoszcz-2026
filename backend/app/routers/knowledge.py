@@ -235,6 +235,7 @@ def add_manual_case(body: ManualCase, conn: sqlite3.Connection = Depends(db_depe
         ),
     )
     db.index_case(conn, cur.lastrowid)
+    db.refresh_derived(conn)
     return {"id": cur.lastrowid, "case_number": body.case_number}
 
 
@@ -279,4 +280,5 @@ def import_excel(
             case_id = cur.lastrowid
             imported += 1
         db.index_case(conn, case_id)
+    db.refresh_derived(conn)
     return {"imported": imported, "updated": updated, "skipped": skipped, "warnings": warnings}

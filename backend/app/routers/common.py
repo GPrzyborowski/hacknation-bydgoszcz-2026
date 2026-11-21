@@ -42,11 +42,22 @@ def get_case_row(conn: sqlite3.Connection, case_id: int) -> sqlite3.Row:
     return row
 
 
-def case_list_item(row: sqlite3.Row) -> dict:
+def case_list_item(row: sqlite3.Row, dept: dict | None = None) -> dict:
     deadline = deadlines.from_iso(row["deadline_date"])
     response = deadlines.from_iso(row["response_date"])
+    received = deadlines.from_iso(row["received_date"])
+    original = deadlines.from_iso(row["original_deadline_date"]) if "original_deadline_date" in row.keys() else None
     done = row["status"] == "odpowiedz_wyslana"
+    dept = dept or {"total": 0, "answered": 0, "waiting": [], "clarification": []}
+    extension = (deadline - original).days if deadline and original and deadline > original else 0
     return {
+        "original_deadline_date": original.isoformat() if original else None,
+        "extension_days": extension,
+        "max_deadline_date": deadlines.extended_deadline(received).isoformat() if received else None,
+        "dept_total": dept["total"],
+        "dept_answered": dept["answered"],
+        "dept_waiting": dept["waiting"],
+        "dept_clarification": dept["clarification"],
         "id": row["id"],
         "ordinal": row["ordinal"],
         "case_number": row["case_number"],

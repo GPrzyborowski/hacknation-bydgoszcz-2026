@@ -180,12 +180,43 @@ def init_db() -> None:
             import demo_seed
 
             demo_seed.load_if_empty(conn)
+        refresh_derived(conn)
         if FTS_ENABLED:
             _rebuild_fts_if_needed(conn)
 
 
+def refresh_derived(conn: sqlite3.Connection) -> None:
+    """Uzupełnia dane pochodne po imporcie: ewidencję wydziałów i pierwotny termin 14-dniowy."""
+    from services import dept_tracking
+
+    dept_tracking.backfill(conn)
+    conn.execute(
+        "UPDATE cases SET original_deadline_date = date(received_date, '+14 days') "
+        "WHERE original_deadline_date IS NULL AND received_date IS NOT NULL"
+    )
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """Dodaje kolumny, których nie było w starszych wersjach bazy (CREATE IF NOT EXISTS ich nie doda)."""
+    case_columns = {r[1] for r in conn.execute("PRAGMA table_info(cases)")}
+    if "original_deadline_date" not in case_columns:
+        # Pierwotny termin 14-dniowy — do wyliczenia przedłużenia (kwerenda +N dni) i kontroli art. 13 ust. 2.
+        conn.execute("ALTER TABLE cases ADD COLUMN original_deadline_date TEXT")
+    # Status odpowiedzi każdego wydziału w sprawie: oczekuje / odpowiedzial / uszczegolowienie.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS case_departments (
+            case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+            code TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'oczekuje',
+            requested_at TEXT NOT NULL DEFAULT (date('now')),
+            answered_at TEXT,
+            clarification_count INTEGER NOT NULL DEFAULT 0,
+            note TEXT,
+            PRIMARY KEY (case_id, code)
+        )
+        """
+    )
     columns = {r[1] for r in conn.execute("PRAGMA table_info(response_drafts)")}
     if "kind" not in columns:
         conn.execute("ALTER TABLE response_drafts ADD COLUMN kind TEXT NOT NULL DEFAULT 'odpowiedz'")

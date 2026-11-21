@@ -1,7 +1,7 @@
 /* Ekrany: zakładki, analiza, rejestr, karta sprawy, baza wiedzy. Ten sam system co ekran wgrywania. */
 
 .container-wide {
-  max-width: 1240px;
+  max-width: 1360px;
 }
 
 /* --- Zakładki --- */
@@ -418,7 +418,7 @@ details > summary {
 
 .subject-cell {
   min-width: 200px;
-  max-width: 300px;
+  max-width: 280px;
 }
 
 .cell-warning {
@@ -706,5 +706,350 @@ details > summary {
 
   .letter {
     padding: 18px;
+  }
+}
+
+/* --- Etapy sprawy --- */
+.stages {
+  margin-top: 24px;
+}
+
+.stages ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 12px 10px;
+  border-top: 6px solid var(--rule-light);
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+.stage.is-done,
+.stage.is-current {
+  border-top-color: var(--accent);
+  color: var(--text);
+}
+
+.stage.is-current {
+  font-weight: 700;
+}
+
+.stage-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.stage.is-current .stage-num {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.stage-label {
+  display: flex;
+  flex-direction: column;
+  padding-top: 2px;
+}
+
+.stage-flag {
+  margin-top: 4px;
+  font-weight: 600;
+  color: var(--warning);
+}
+
+/* --- Wydziały w sprawie --- */
+.dept-table td {
+  vertical-align: middle;
+}
+
+.dept-status {
+  display: inline-block;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border: 1px solid;
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+
+.dept-status.is-answered {
+  color: var(--success);
+  border-color: var(--success);
+  background: var(--success-tint);
+}
+
+.dept-status.is-waiting {
+  color: var(--text);
+  border-color: var(--rule);
+  background: var(--bg);
+}
+
+.dept-status.is-clarification {
+  color: var(--warning);
+  border-color: var(--warning-border);
+  background: var(--warning-tint);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+
+.clarify-form {
+  padding: 18px 20px;
+  background: var(--surface-muted);
+}
+
+.cell-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.dept-cell {
+  display: flex;
+  flex-direction: column;
+}
+
+.dept-done {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.ext-days {
+  align-self: center;
+  min-width: 220px;
+  font-weight: 600;
+}
+
+/* --- Kalendarium --- */
+.cal-toolbar {
+  margin-top: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cal-nav .secondary-button {
+  margin-top: 0;
+}
+
+.cal-month {
+  min-width: 220px;
+  text-align: center;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.cal-month::first-letter {
+  text-transform: uppercase;
+}
+
+.cal-legend {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  font-size: 14px;
+}
+
+.cal-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-key::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--rule);
+}
+
+.key-overdue::before {
+  background: var(--danger-tint);
+  border-color: var(--danger);
+}
+
+.key-today::before {
+  background: var(--warning-tint);
+  border-color: var(--warning-border);
+}
+
+.key-normal::before {
+  background: var(--accent-tint);
+  border-color: var(--tint-border);
+}
+
+.key-done::before {
+  background: var(--bg);
+}
+
+.key-free::before {
+  background: var(--surface-muted);
+}
+
+.calendar {
+  margin-top: 12px;
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border: 1px solid var(--rule);
+}
+
+.calendar th {
+  padding: 8px;
+  background: var(--surface-muted);
+  border-bottom: 2px solid var(--text);
+  font-size: 14px;
+  text-align: left;
+}
+
+.cal-day {
+  height: 112px;
+  padding: 6px;
+  vertical-align: top;
+  border: 1px solid var(--rule-light);
+}
+
+.cal-day.is-free {
+  background: var(--surface-muted);
+}
+
+.cal-day.is-outside .cal-date {
+  color: var(--rule);
+}
+
+.cal-date {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  height: 26px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cal-day.is-today .cal-date {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+}
+
+.cal-day.is-today {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.cal-items {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cal-item {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 6px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--text);
+  text-decoration: none;
+  border: 1px solid var(--tint-border);
+  background: var(--accent-tint);
+  border-radius: 2px;
+}
+
+.cal-item:hover {
+  border-color: var(--accent);
+}
+
+.cal-item .num {
+  font-weight: 700;
+}
+
+.cal-item-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cal-item.urgency-overdue {
+  background: var(--danger-tint);
+  border-color: var(--danger);
+}
+
+.cal-item.urgency-today,
+.cal-item.urgency-tomorrow {
+  background: var(--warning-tint);
+  border-color: var(--warning-border);
+}
+
+.cal-item.urgency-done {
+  background: var(--bg);
+  border-color: var(--rule);
+  color: var(--text-secondary);
+}
+
+.upcoming {
+  display: grid;
+  grid-template-columns: 110px 200px minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  align-items: baseline;
+}
+
+.upcoming-date {
+  font-weight: 700;
+}
+
+.upcoming.urgency-today .upcoming-date,
+.upcoming.urgency-tomorrow .upcoming-date {
+  color: var(--warning);
+}
+
+@media (max-width: 960px) {
+  .stages ol {
+    grid-template-columns: 1fr;
+  }
+
+  .cal-day {
+    height: 84px;
+  }
+
+  .cal-item-subject {
+    display: none;
+  }
+
+  .upcoming {
+    grid-template-columns: 1fr;
   }
 }

@@ -78,7 +78,14 @@ def chat_json(system: str, user: str, max_tokens: int = 4096) -> dict:
         break
 
     if res.status_code in (401, 403):
-        raise LLMError("Gemini odrzucił klucz API (sprawdź GEMINI_API_KEY w pliku .env).")
+        hint = (
+            " Klucz zaczyna się od „AQ.” — to nie jest klucz Google AI Studio; utwórz klucz „AIza…” na aistudio.google.com/apikey."
+            if config.LLM_API_KEY.startswith("AQ.")
+            else ""
+        )
+        raise LLMError(f"Gemini odrzucił klucz API (sprawdź GEMINI_API_KEY w pliku .env).{hint}")
+    if res.status_code == 404:
+        raise LLMError(f"Gemini nie zna modelu „{config.LLM_MODEL}” (sprawdź LLM_MODEL w .env, np. gemini-2.5-flash).")
     if res.status_code == 429:
         raise LLMError("Przekroczono limit zapytań Gemini — odczekaj chwilę i spróbuj ponownie.")
     if res.status_code >= 400:

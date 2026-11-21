@@ -13,7 +13,12 @@ from schemas import (
     CaseDetail,
     CaseListItem,
     CaseStatus,
+    ClarificationIn,
+    ClarificationOut,
+    DepartmentAdd,
     DepartmentReplyResponse,
+    DepartmentStatusOut,
+    DepartmentStatusUpdate,
     LetterKind,
     LetterRequest,
     RegisterCase,
@@ -22,7 +27,7 @@ from schemas import (
     StatusUpdate,
     UpdateCase,
 )
-from services import analysis, anonymization, deadlines, extraction, letters, search
+from services import analysis, anonymization, deadlines, dept_tracking, extraction, letters, search
 
 router = APIRouter(prefix="/api/cases", tags=["2. Rejestr wniosków"])
 
@@ -51,7 +56,8 @@ def list_cases(
             sql += f" AND id IN ({','.join('?' * len(ids))})"
             params += ids
     sql += " ORDER BY received_date IS NULL, received_date ASC, id ASC"
-    return [case_list_item(r) for r in conn.execute(sql, params).fetchall()]
+    summary = dept_tracking.summary(conn)
+    return [case_list_item(r, summary.get(r["id"])) for r in conn.execute(sql, params).fetchall()]
 
 
 @router.get("/years", response_model=list[int])
@@ -63,7 +69,7 @@ def list_years(conn: sqlite3.Connection = Depends(db_dependency)):
 @router.get("/{case_id}", response_model=CaseDetail)
 def get_case(case_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
     row = get_case_row(conn, case_id)
-    item = case_list_item(row)
+    item = case_list_item(row, dept_tracking.summary(conn).get(case_id))
     replies = conn.execute(
         "SELECT id, department, filename, text, created_at FROM department_replies WHERE case_id = ? ORDER BY id", (case_id,)
     ).fetchall()
@@ -77,6 +83,7 @@ def get_case(case_id: int, conn: sqlite3.Connection = Depends(db_dependency)):
     return {
         **item,
         "applicant_contact": row["applicant_contact"],
+        "department_status": dept_tracking.for_case(conn, case_id),
         "documents": [dict(d) for d in documents],
         "request_text": row["request_text"],
         "parsed_request": json.loads(row["parsed_request"]) if row["parsed_request"] else None,
@@ -135,17 +142,20 @@ def register_case(body: RegisterCase, conn: sqlite3.Connection = Depends(db_depe
     cur = conn.execute(
         """
         INSERT INTO cases(case_number, year, ordinal, applicant, applicant_contact, subject, received_date, deadline_date,
-                          status, procedure_mode, departments, initials, notes, request_text, parsed_request, intake_id, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ui')
+                          original_deadline_date, status, procedure_mode, departments, initials, notes, request_text,
+                          parsed_request, intake_id, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ui')
         """,
         (
             case_number, year, ordinal, body.applicant, body.applicant_contact, body.subject,
-            body.received_date.isoformat(), deadline.isoformat(), status.value, body.procedure_mode,
+            body.received_date.isoformat(), deadline.isoformat(),
+            deadlines.default_deadline(body.received_date).isoformat(), status.value, body.procedure_mode,
             analysis.dumps(departments), body.initials, body.notes, request_text,
             analysis.dumps(parsed) if parsed else None, body.intake_id,
         ),
     )
     case_id = cur.lastrowid
+    dept_tracking.sync(conn, case_id, departments)
     if request_text:
         conn.execute(
             "INSERT INTO case_documents(case_id, kind, filename, text, document_date) VALUES (?, 'wniosek', ?, ?, ?)",
@@ -183,8 +193,10 @@ def update_case(case_id: int, body: UpdateCase, conn: sqlite3.Connection = Depen
     changes = body.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(400, "Brak pól do zmiany.")
+    new_departments = None
     if "departments" in changes:
-        changes["departments"] = analysis.dumps(validate_departments(conn, changes["departments"] or []))
+        new_departments = validate_departments(conn, changes["departments"] or [])
+        changes["departments"] = analysis.dumps(new_departments)
     for key in ("received_date", "deadline_date", "response_date"):
         if isinstance(changes.get(key), date):
             changes[key] = changes[key].isoformat()
@@ -192,6 +204,8 @@ def update_case(case_id: int, body: UpdateCase, conn: sqlite3.Connection = Depen
         changes["year"] = int(changes["received_date"][:4])
     sets = ", ".join(f"{k} = ?" for k in changes)
     conn.execute(f"UPDATE cases SET {sets}, updated_at = datetime('now') WHERE id = ?", (*changes.values(), case_id))
+    if new_departments is not None:
+        dept_tracking.sync(conn, case_id, new_departments)
     db.index_case(conn, case_id)
     db.log_event(conn, case_id, "edycja", ", ".join(changes))
     return case_list_item(get_case_row(conn, case_id))
@@ -260,6 +274,10 @@ def department_reply(
         "INSERT INTO department_replies(case_id, department, filename, text) VALUES (?, ?, ?, ?)",
         (case_id, department, filename, "\n\n".join(texts)),
     )
+    answered = dept_tracking.mark_answered(conn, case_id, department)
+    if answered:
+        db.log_event(conn, case_id, "wydzial_odpowiedzial", answered)
+    row = get_case_row(conn, case_id)
 
     replies = [dict(r) for r in conn.execute("SELECT department, filename, text FROM department_replies WHERE case_id = ? ORDER BY id", (case_id,))]
     case = dict(row)
@@ -322,6 +340,16 @@ def create_letter(case_id: int, body: LetterRequest, conn: sqlite3.Connection = 
         new_deadline = min(proposal, max_deadline)
     if new_deadline and max_deadline and new_deadline > max_deadline:
         raise HTTPException(400, "Termin nie może przekraczać 2 miesięcy od dnia złożenia wniosku (art. 13 ust. 2 u.d.i.p.).")
+    original = deadlines.from_iso(row["original_deadline_date"]) or (deadlines.default_deadline(received) if received else None)
+    warning = None
+    if body.kind == LetterKind.kwerenda:
+        if new_deadline and original and new_deadline <= original:
+            raise HTTPException(400, f"Nowy termin musi być późniejszy niż termin 14-dniowy ({original.strftime('%d.%m.%Y')}).")
+        if original and date.today() > original:
+            warning = (
+                f"Termin 14-dniowy minął {original.strftime('%d.%m.%Y')}. Zgodnie z art. 13 ust. 2 u.d.i.p. powiadomienie "
+                "o przedłużeniu powinno zostać wysłane przed jego upływem — zawiadomienie będzie spóźnione."
+            )
 
     codes = [validate_departments(conn, [body.department])[0]] if body.department else json.loads(row["departments"] or "[]")
     dept_names = _department_names(conn, codes)
@@ -356,5 +384,66 @@ def create_letter(case_id: int, body: LetterRequest, conn: sqlite3.Connection = 
         "status": current["status"],
         "kind": body.kind.value,
         "deadline_date": current["deadline_date"],
+        "warning": warning,
         **draft,
     }
+
+
+# --- ewidencja odpowiedzi wydziałów -----------------------------------------------------------
+
+@router.post("/{case_id}/departments", response_model=list[DepartmentStatusOut], status_code=201)
+def add_department(case_id: int, body: DepartmentAdd, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Dodaje wydział do sprawy (status „czeka na odpowiedź”)."""
+    row = get_case_row(conn, case_id)
+    code = validate_departments(conn, [body.code])[0]
+    codes = json.loads(row["departments"] or "[]")
+    if code in codes:
+        raise HTTPException(409, f"Wydział {code} jest już w sprawie.")
+    codes.append(code)
+    conn.execute("UPDATE cases SET departments = ?, updated_at = datetime('now') WHERE id = ?", (analysis.dumps(codes), case_id))
+    dept_tracking.sync(conn, case_id, codes)
+    if row["status"] == "brak_dzialan":
+        conn.execute("UPDATE cases SET status = 'zapytania_wyslane' WHERE id = ?", (case_id,))
+    db.index_case(conn, case_id)
+    db.log_event(conn, case_id, "zapytanie_do_wydzialu", code)
+    return dept_tracking.for_case(conn, case_id)
+
+
+@router.patch("/{case_id}/departments/{code}", response_model=list[DepartmentStatusOut])
+def set_department_status(case_id: int, code: str, body: DepartmentStatusUpdate, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Ręczna zmiana statusu wydziału: `oczekuje`, `odpowiedzial`, `uszczegolowienie`."""
+    get_case_row(conn, case_id)
+    code = code.upper()
+    if not conn.execute("SELECT 1 FROM case_departments WHERE case_id = ? AND code = ?", (case_id, code)).fetchone():
+        raise HTTPException(404, f"Wydziału {code} nie ma w tej sprawie.")
+    dept_tracking.set_status(conn, case_id, code, body.status, body.note)
+    db.log_event(conn, case_id, f"wydzial_{body.status}", code)
+    return dept_tracking.for_case(conn, case_id)
+
+
+@router.delete("/{case_id}/departments/{code}", response_model=list[DepartmentStatusOut])
+def remove_department(case_id: int, code: str, conn: sqlite3.Connection = Depends(db_dependency)):
+    row = get_case_row(conn, case_id)
+    codes = [c for c in json.loads(row["departments"] or "[]") if c != code.upper()]
+    conn.execute("UPDATE cases SET departments = ? WHERE id = ?", (analysis.dumps(codes), case_id))
+    dept_tracking.sync(conn, case_id, codes)
+    db.index_case(conn, case_id)
+    return dept_tracking.for_case(conn, case_id)
+
+
+@router.post("/{case_id}/departments/{code}/clarification", response_model=ClarificationOut)
+def request_clarification(case_id: int, code: str, body: ClarificationIn, conn: sqlite3.Connection = Depends(db_dependency)):
+    """Prośba do wydziału o uszczegółowienie odpowiedzi: status wydziału → `uszczegolowienie`, zwraca treść
+    pisma wewnętrznego do skopiowania (system niczego nie wysyła)."""
+    row = get_case_row(conn, case_id)
+    code = code.upper()
+    if not conn.execute("SELECT 1 FROM case_departments WHERE case_id = ? AND code = ?", (case_id, code)).fetchone():
+        raise HTTPException(404, f"Wydziału {code} nie ma w tej sprawie.")
+    name = _department_names(conn, [code])
+    last = conn.execute(
+        "SELECT text FROM department_replies WHERE case_id = ? AND department = ? ORDER BY id DESC LIMIT 1", (case_id, code)
+    ).fetchone()
+    text = dept_tracking.clarification_request(dict(row), name[0] if name else code, body.details, last["text"] if last else None)
+    dept_tracking.set_status(conn, case_id, code, dept_tracking.CLARIFICATION, body.details)
+    db.log_event(conn, case_id, "prosba_o_uszczegolowienie", f"{code}: {body.details or ''}".strip(": "))
+    return {"code": code, "text": text, "departments": dept_tracking.for_case(conn, case_id)}

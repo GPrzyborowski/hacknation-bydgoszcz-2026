@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react'
 import { FileDropzone } from '../components/FileDropzone'
+import { DepartmentsPanel, ExtensionPanel, StageTracker } from '../components/CaseParts'
 import { DraftEditor } from '../components/DraftEditor'
 import {
   ApiError,
@@ -44,6 +45,7 @@ export function CaseView({ id }: { id: number }) {
   const [departments, setDepartments] = useState<Department[]>([])
   const [entities, setEntities] = useState<ExternalEntity[]>([])
   const [activeDraftId, setActiveDraftId] = useState<number | null>(null)
+  const [draftWarning, setDraftWarning] = useState<string | null>(null)
   const reload = () => setVersion((v) => v + 1)
 
   useEffect(() => {
@@ -88,7 +90,10 @@ export function CaseView({ id }: { id: number }) {
 
   const onDraft = (result: DraftResult) => {
     setActiveDraftId(result.draft_id)
+    setDraftWarning(result.warning)
     reload()
+    // Projekt pisma pojawia się niżej — przewijamy do niego.
+    setTimeout(() => document.getElementById('draft-heading')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300)
   }
   const draft = data.drafts.find((d) => d.id === activeDraftId) ?? data.drafts[0] ?? null
   const nameOf = (code: string) => departments.find((d) => d.code === code)?.name ?? code
@@ -104,6 +109,8 @@ export function CaseView({ id }: { id: number }) {
         <h1 className="num">{data.case_number}</h1>
         <p className="lead">{data.subject}</p>
       </section>
+
+      <StageTracker data={data} />
 
       {data.date_parse_warning && (
         <div className="notice notice-warning">
@@ -166,6 +173,13 @@ export function CaseView({ id }: { id: number }) {
         <StatusForm key={`${data.status}|${data.deadline_date}`} data={data} onSaved={reload} />
       </section>
 
+      <DepartmentsPanel
+        key={data.department_status.map((r) => r.code + r.status).join('|')}
+        data={data}
+        departments={departments}
+        onChanged={reload}
+      />
+
       {data.documents.length > 0 && (
         <section className="panel" aria-labelledby="docs-heading">
           <h2 id="docs-heading" className="panel-title">
@@ -194,6 +208,7 @@ export function CaseView({ id }: { id: number }) {
       {!closed && (
         <>
           <ReplyForm caseId={data.id} departments={departments} caseDepartments={data.departments} onDraft={onDraft} />
+          <ExtensionPanel key={data.deadline_date} data={data} onDraft={onDraft} />
           <LetterForm caseId={data.id} departments={departments} entities={entities} receivedAt={data.received_date} onDraft={onDraft} />
         </>
       )}
@@ -245,6 +260,11 @@ export function CaseView({ id }: { id: number }) {
               </div>
             )}
           </div>
+          {draftWarning && (
+            <div className="notice notice-warning">
+              <p>{draftWarning}</p>
+            </div>
+          )}
           <DraftEditor
             key={draft.id}
             caseId={data.id}
@@ -441,7 +461,6 @@ function ReplyForm({
 }
 
 const LETTERS: { kind: LetterKind; label: string; hint: string }[] = [
-  { kind: 'kwerenda', label: 'Kwerenda — przedłużenie terminu', hint: 'Powiadomienie o przedłużeniu terminu (art. 13 ust. 2 u.d.i.p.), maks. 2 miesiące od wpływu.' },
   { kind: 'doprecyzowanie', label: 'Wezwanie do doprecyzowania', hint: 'Wnioskodawca ma 7 dni na doprecyzowanie; wyznaczasz nowy termin rozpatrzenia.' },
   { kind: 'nie_dysponent', label: 'Urząd nie jest dysponentem', hint: 'Wskazanie podmiotu, do którego wnioskodawca powinien się zwrócić (art. 4 ust. 3 u.d.i.p.).' },
 ]
@@ -459,7 +478,7 @@ function LetterForm({
   receivedAt: string | null
   onDraft: (r: DraftResult) => void
 }) {
-  const [kind, setKind] = useState<LetterKind>('kwerenda')
+  const [kind, setKind] = useState<LetterKind>('doprecyzowanie')
   const [deadline, setDeadline] = useState('')
   const [department, setDepartment] = useState('')
   const [details, setDetails] = useState('')
@@ -514,7 +533,7 @@ function LetterForm({
         {kind !== 'nie_dysponent' && (
           <div className="field">
             <label className="field-label small" htmlFor="letter-deadline">
-              Nowy termin <span className="optional">(puste — {kind === 'kwerenda' ? '2 miesiące od wpływu' : 'za 21 dni'})</span>
+              Nowy termin <span className="optional">(puste — za 21 dni, maks. 2 miesiące od wpływu)</span>
             </label>
             <input
               id="letter-deadline"

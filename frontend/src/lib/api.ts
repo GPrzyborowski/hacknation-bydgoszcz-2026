@@ -183,7 +183,30 @@ export type CaseItem = {
   days_remaining: number | null
   answered_on_time: boolean | null
   deadline_note: string | null
+  /** Termin 14-dniowy przed przedłużeniem. */
+  original_deadline_date: string | null
+  /** O ile dni przedłużono termin (kwerenda / doprecyzowanie). */
+  extension_days: number
+  /** Najpóźniejszy dopuszczalny termin: 2 miesiące od wpływu (art. 13 ust. 2 u.d.i.p.). */
+  max_deadline_date: string | null
+  dept_total: number
+  dept_answered: number
+  dept_waiting: string[]
+  dept_clarification: string[]
   urgency: Urgency
+}
+
+export type DeptStatus = 'oczekuje' | 'odpowiedzial' | 'uszczegolowienie'
+
+export type DepartmentStatus = {
+  code: string
+  name: string
+  status: DeptStatus
+  status_label: string
+  requested_at: string | null
+  answered_at: string | null
+  clarification_count: number
+  note: string | null
 }
 
 export type AnonymizationCandidate = {
@@ -214,6 +237,7 @@ export type CaseDetail = CaseItem & {
   request_text: string | null
   parsed_request: ParsedRequest | null
   response_text: string | null
+  department_status: DepartmentStatus[]
   documents: { id: number; kind: string; filename: string | null; text: string; document_date: string | null }[]
   department_replies: { id: number; department: string | null; filename: string | null; text: string; created_at: string }[]
   drafts: Draft[]
@@ -225,6 +249,7 @@ export type DraftResult = {
   status: CaseStatus
   kind: string
   deadline_date: string | null
+  warning: string | null
   draft_id: number
   draft_text: string
   llm_used: boolean
@@ -307,7 +332,20 @@ export const createLetter = (
   input: { kind: LetterKind; new_deadline?: string | null; external_entity_id?: number | null; department?: string | null; details?: string | null },
 ) => send<DraftResult>(`/api/cases/${id}/letter`, 'POST', input)
 
-export const anonymizePreview = (text: string, knownPeople: string[]) =>
+export const addCaseDepartment = (id: number, code: string) =>
+  send<DepartmentStatus[]>(`/api/cases/${id}/departments`, 'POST', { code })
+
+export const setDepartmentStatus = (id: number, code: string, status: DeptStatus) =>
+  send<DepartmentStatus[]>(`/api/cases/${id}/departments/${encodeURIComponent(code)}`, 'PATCH', { status })
+
+export const requestClarification = (id: number, code: string, details: string) =>
+  send<{ code: string; text: string; departments: DepartmentStatus[] }>(
+    `/api/cases/${id}/departments/${encodeURIComponent(code)}/clarification`,
+    'POST',
+    { details: details || null },
+  )
+
+export const anonymizePreview =(text: string, knownPeople: string[]) =>
   send<AnonymizationCandidate[]>('/api/response/anonymize-preview', 'POST', { text, known_people: knownPeople })
 
 /** Zwraca plik pisma (DOCX/PDF) z nałożonymi anonimizacjami i nazwę pliku. */

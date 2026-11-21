@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getHealth, type Health } from './lib/api'
 import { hrefFor, useRoute, type Route } from './lib/router'
+import { CalendarView } from './views/CalendarView'
 import { CaseView } from './views/CaseView'
 import { IntakeView } from './views/IntakeView'
 import { KnowledgeView } from './views/KnowledgeView'
@@ -11,6 +12,7 @@ import './views.css'
 const TABS: { route: Route; label: string; match: Route['name'][] }[] = [
   { route: { name: 'intake' }, label: 'Nowy wniosek', match: ['intake'] },
   { route: { name: 'register' }, label: 'Rejestr wniosków', match: ['register', 'case'] },
+  { route: { name: 'calendar' }, label: 'Kalendarium', match: ['calendar'] },
   { route: { name: 'knowledge' }, label: 'Baza wiedzy', match: ['knowledge'] },
 ]
 
@@ -29,7 +31,7 @@ function App() {
     }
   }, [])
 
-  const wide = route.name === 'register' || route.name === 'case' || route.name === 'knowledge'
+  const wide = route.name === 'register' || route.name === 'calendar' || route.name === 'case' || route.name === 'knowledge'
 
   return (
     <div className="page">
@@ -85,6 +87,7 @@ function App() {
         )}
         {route.name === 'intake' && <IntakeView />}
         {route.name === 'register' && <RegisterView />}
+        {route.name === 'calendar' && <CalendarView />}
         {route.name === 'case' && <CaseView key={route.id} id={route.id} />}
         {route.name === 'knowledge' && <KnowledgeView />}
       </main>
