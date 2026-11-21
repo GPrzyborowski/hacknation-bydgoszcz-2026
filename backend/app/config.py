@@ -15,16 +15,20 @@ BASE_DIR = Path(__file__).resolve().parent
 # Baza SQLite (z indeksem FTS5) — domyślnie w backend/app/data, katalog ignorowany przez git.
 DB_PATH = Path(os.getenv("DB_PATH", BASE_DIR / "data" / "udip.db"))
 
-# Tryb pracy bez internetu: LLM może być wywołany tylko pod adresem lokalnym / w sieci wewnętrznej.
+# OFFLINE_MODE=true blokuje wysyłkę treści do zewnętrznego modelu (Gemini) — odpowiedzi 403.
 OFFLINE_MODE = _bool("OFFLINE_MODE", False)
 
-# Endpoint zgodny z OpenAI Chat Completions (Ollama: http://host:11434/v1, vLLM, LM Studio, ...).
-# Pusty LLM_BASE_URL = tryb heurystyczny (bez modelu językowego) — przydatny do developmentu.
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
-LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:7b-instruct-q4_K_M")
-LLM_API_KEY = os.getenv("LLM_API_KEY", "")
-LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "180"))
+# Model językowy: Google Gemini przez endpoint zgodny z OpenAI. Bez klucza API — tryb heurystyczny.
+GEMINI_OPENAI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+LLM_BASE_URL = (os.getenv("LLM_BASE_URL") or GEMINI_OPENAI_URL).rstrip("/")
+LLM_MODEL = os.getenv("LLM_MODEL") or "gemini-2.5-flash"
+LLM_API_KEY = (os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY") or "").strip().strip('"')
+LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "90"))
+# Gdy Gemini nie odpowie lub zwróci niepoprawny JSON: analiza heurystyczna z ostrzeżeniem zamiast błędu 502.
+LLM_FALLBACK_HEURISTIC = _bool("LLM_FALLBACK_HEURISTIC", True)
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+# "none" wyłącza „myślenie” Gemini 2.5 Flash (szybciej, a JSON nie jest ucinany przez limit tokenów).
+LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "none")
 
 # OCR (Tesseract) — język polski.
 OCR_LANG = os.getenv("OCR_LANG", "pol")

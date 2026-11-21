@@ -39,11 +39,11 @@ An assistant built around the actual legal procedure for public-information requ
 
 - **Built (frontend):** the upload screen, which handles drag-and-drop, file validation and the received date, and posts the file to `POST /api/intake/analyze`.
 - **Built (backend API, see `backend/README.md`):** request analysis with OCR, archive search for similar cases, department suggestions, the deadline register with year filter and urgency, intake of department answers, reply drafting in the BKS letter format (answer, kwerenda, doprecyzowanie, nie dysponent), anonymisation following the UMB list, DOCX/PDF export, an editable knowledge base.
-- **Not yet built in the UI:** the register/calendar screen, the analysis result view, department answer intake, the anonymisation review and the knowledge-base screens. The API for all of them exists.
+- **Built (frontend):** tabs Nowy wniosek / Rejestr wniosków / Baza wiedzy; analysis result with registration, register table with urgency highlighting, case view with department answer intake, letters, anonymisation review (grey proposal, black accepted) and DOCX/PDF export.
 - **Deadline rule:** the UMB register counts the deadline as received date + 14 days (`=E+14`). A deadline on a non-working day is flagged, not shifted (art. 57 § 4 KPA shown as information).
 - **Core capability:** anonymisation of personal data in draft replies is a key feature, not an add-on.
 - **Stack:** React 19, TypeScript and Vite frontend; FastAPI backend; Docker Compose for local development.
-- **On-premises processing:** the challenge requires the concept to work fully locally without internet (open AI is allowed only at the hackathon, on test data). The backend enforces this with `OFFLINE_MODE=true` (default), which refuses any non-local model endpoint.
+- **Language model:** the hackathon build runs on Google Gemini (`gemini-2.5-flash`) with organiser test data only. The challenge requires the target concept to work fully locally without internet; `OFFLINE_MODE=true` blocks sending content to Gemini, and the backend falls back to rule-based analysis when no model is available.
 
 ## Brand Commitments
 

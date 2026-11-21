@@ -39,6 +39,12 @@ const longDate = new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'long
 const weekday = new Intl.DateTimeFormat('pl-PL', { weekday: 'long' })
 const shortDate = new Intl.DateTimeFormat('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' })
 
+/** RRRR-MM-DD z API → „14.01.2026”; brak daty → „—”. */
+export function formatIso(value: string | null | undefined): string {
+  const d = value ? parseIso(value) : null
+  return d ? shortDate.format(d) : '—'
+}
+
 export const formatLong = (d: Date) => longDate.format(d)
 export const formatWeekday = (d: Date) => weekday.format(d)
 export const formatShort = (d: Date) => shortDate.format(d)

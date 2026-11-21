@@ -9,16 +9,22 @@ cp .env.example .env          # w katalogu głównym repo
 docker compose up --build     # backend :8000, frontend :5173
 ```
 
-Bez `LLM_BASE_URL` backend działa w **trybie heurystycznym** (ekstrakcja regułowa, szablon pisma) —
-cały workflow da się przejść bez modelu. Z lokalnym modelem:
+Model językowy: **Google Gemini** (`gemini-2.5-flash`) przez endpoint zgodny z OpenAI
+(`https://generativelanguage.googleapis.com/v1beta/openai`). Wystarczy klucz w `.env`:
 
-```bash
-docker compose --profile llm up -d ollama
-docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M
-# .env: LLM_BASE_URL=http://ollama:11434/v1
+```
+GEMINI_API_KEY=AIza...
+LLM_MODEL=gemini-2.5-flash
+LLM_REASONING_EFFORT=none   # bez „myślenia”: szybciej, JSON nie jest ucinany
+OFFLINE_MODE=false
 ```
 
-`OFFLINE_MODE=true` (domyślnie) blokuje wywołanie LLM spoza sieci lokalnej (HTTP 403).
+Po zmianie `.env`: `docker compose up -d --force-recreate backend`. `GET /` pokazuje `"model": "gemini-2.5-flash"`.
+Bez klucza (lub gdy Gemini nie odpowie / przekroczony limit 429) backend przechodzi na analizę regułową
+z ostrzeżeniem — upload nigdy nie wisi. `OFFLINE_MODE=true` blokuje wysyłkę treści do Gemini (403).
+Na hackathonie do Gemini trafiają wyłącznie dane testowe organizatora.
+
+Frontend: http://localhost:5173 — zakładki **Nowy wniosek**, **Rejestr wniosków**, **Baza wiedzy**.
 
 ## Dane testowe UMB
 

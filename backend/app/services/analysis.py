@@ -3,6 +3,7 @@ import json
 import re
 from datetime import date
 
+import config
 from services import letters, llm
 from services.deadlines import parse_date
 
@@ -54,6 +55,12 @@ def parse_request(text: str, departments: list[dict]) -> tuple[dict, list[dict],
         return _normalize_parsed(data, text), list(data.get("sugerowane_wydzialy") or []), True
     except llm.LLMDisabled:
         return heuristic_parse(text), [], False
+    except llm.LLMError as exc:
+        if not config.LLM_FALLBACK_HEURISTIC:
+            raise
+        parsed = heuristic_parse(text)
+        parsed["uwagi"] = f"Model językowy niedostępny ({exc}) — użyto analizy heurystycznej. " + parsed["uwagi"]
+        return parsed, [], False
 
 
 def _normalize_parsed(data: dict, text: str) -> dict:
@@ -292,7 +299,7 @@ def draft_reply(
         .replace("{categories}", "; ".join(categories))
     )
     try:
-        data = llm.chat_json(system, user, max_tokens=3000)
+        data = llm.chat_json(system, user, max_tokens=8192)
         text = str(data.get("draft_text") or "").strip()
         if not text:
             raise llm.LLMError("Model nie zwrócił treści projektu odpowiedzi.")
@@ -300,6 +307,11 @@ def draft_reply(
         return text, cands, True
     except llm.LLMDisabled:
         return letters.answer(case, form, questions, replies, dept_names), [], False
+    except llm.LLMError as exc:
+        if not config.LLM_FALLBACK_HEURISTIC:
+            raise
+        note = f"[UWAGA: model językowy niedostępny ({exc}) — projekt z szablonu UMB]\n"
+        return note + letters.answer(case, form, questions, replies, dept_names), [], False
 
 
 def _pl_date(iso_value: str | None) -> str:

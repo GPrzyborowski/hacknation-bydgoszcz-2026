@@ -7,9 +7,18 @@ type Props = {
   onFiles: (files: File[]) => void
   disabled?: boolean
   describedBy?: string
+  /** Nagłówek strefy, np. „Przeciągnij i upuść odpowiedź wydziału tutaj”. */
+  title?: string
 }
 
-export function FileDropzone({ id, invalid = false, onFiles, disabled = false, describedBy }: Props) {
+export function FileDropzone({
+  id,
+  invalid = false,
+  onFiles,
+  disabled = false,
+  describedBy,
+  title = 'Przeciągnij i upuść wniosek tutaj',
+}: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const dragDepth = useRef(0)
   const [isDragging, setIsDragging] = useState(false)
@@ -94,7 +103,7 @@ export function FileDropzone({ id, invalid = false, onFiles, disabled = false, d
 
       <div className="dropzone-text">
         <p className="dropzone-title">
-          {isDragging ? 'Upuść plik, aby go dodać' : 'Przeciągnij i upuść wniosek tutaj'}
+          {isDragging ? 'Upuść plik, aby go dodać' : title}
         </p>
         <p className="dropzone-sub">
           lub <span className="dropzone-link">wybierz plik z dysku</span>

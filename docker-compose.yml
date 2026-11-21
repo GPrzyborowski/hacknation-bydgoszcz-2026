@@ -19,31 +19,12 @@ services:
     volumes:
       # Kod z hot-reloadem; baza SQLite ląduje w backend/app/data (ignorowane przez git).
       - ./backend/app:/app
+    # Klucz Gemini (GEMINI_API_KEY) i pozostałe ustawienia — z pliku .env w katalogu głównym.
     env_file:
       - path: .env
         required: false
     environment:
       - DB_PATH=/app/data/udip.db
-      # Pusty LLM_BASE_URL = tryb heurystyczny (bez modelu). Ollama na hoście: http://host.docker.internal:11434/v1
-      - LLM_BASE_URL=${LLM_BASE_URL:-}
-      - LLM_MODEL=${LLM_MODEL:-qwen2.5:7b-instruct-q4_K_M}
-      - OFFLINE_MODE=${OFFLINE_MODE:-true}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"
-
-  # Lokalny model językowy (opcjonalnie): docker compose --profile llm up
-  # Po starcie: docker compose exec ollama ollama pull qwen2.5:7b-instruct-q4_K_M
-  # i ustaw w .env: LLM_BASE_URL=http://ollama:11434/v1
-  ollama:
-    image: ollama/ollama:latest
-    profiles: ["llm"]
-    volumes:
-      - ollama:/root/.ollama
-    ports:
-      - "11434:11434"
-
-volumes:
-  ollama:
