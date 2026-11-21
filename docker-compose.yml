@@ -1,40 +1,15 @@
 services:
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: udip-backend
-    ports:
-      - "8000:8000"
-    volumes:
-      # Hot-reload 
-      - ./backend:/app
-      # Trwałe dane (baza SQLite FTS5 + załączniki PDF/DOCX)
-      - udip_data:/app/data
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=sqlite:////app/data/udip.db
-      - UPLOAD_DIR=/app/data/uploads
-      - OFFLINE_MODE=${OFFLINE_MODE:-false}
-    restart: unless-stopped
-
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: udip-frontend
+    container_name: hacknation-frontend
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      # Izolacja node_modules wewnątrz kontenera (brak konfliktów Windows/Linux)
-      - /app/node_modules
-    environment:
-      - VITE_API_URL=http://localhost:8000
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-volumes:
-  udip_data:
+      - "80:5173"
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hacknation-backend
+    ports:
+      - "8000:8000"
