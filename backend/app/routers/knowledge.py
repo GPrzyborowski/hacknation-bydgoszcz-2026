@@ -42,7 +42,7 @@ def _get(conn: sqlite3.Connection, table: str, key, *, key_column: str = "id", l
 
 # --- przepisy i zarządzenia ------------------------------------------------------------------------
 
-@router.get("/rules", response_model=list[RuleOut])
+@router.get("/rules", summary="Przepisy i zarządzenia", response_model=list[RuleOut])
 def list_rules(
     active_only: bool = False,
     q: str | None = Query(None, description="Szukaj w tytule, źródle i treści"),
@@ -58,7 +58,7 @@ def list_rules(
     return [dict(row) for row in conn.execute(f"SELECT * FROM rules WHERE {where} ORDER BY id", params)]
 
 
-@router.post("/rules", response_model=RuleOut, status_code=201)
+@router.post("/rules", summary="Dodanie przepisu", response_model=RuleOut, status_code=201)
 def create_rule(body: RuleIn, conn: sqlite3.Connection = Depends(db_dependency)):
     cursor = conn.execute(
         "INSERT INTO rules(title, source, content, is_active) VALUES (?, ?, ?, ?)",
@@ -67,14 +67,14 @@ def create_rule(body: RuleIn, conn: sqlite3.Connection = Depends(db_dependency))
     return _get(conn, "rules", cursor.lastrowid, label="reguły o id")
 
 
-@router.put("/rules/{rule_id}", response_model=RuleOut)
+@router.put("/rules/{rule_id}", summary="Edycja przepisu", response_model=RuleOut)
 def update_rule(rule_id: int, body: RuleUpdate, conn: sqlite3.Connection = Depends(db_dependency)):
     _get(conn, "rules", rule_id, label="reguły o id")
     db.update_row(conn, "rules", "id", rule_id, body.model_dump(exclude_unset=True), touch=True)
     return _get(conn, "rules", rule_id, label="reguły o id")
 
 
-@router.post("/rules/import-document", response_model=list[RuleOut], status_code=201, responses=UPLOAD_ERRORS)
+@router.post("/rules/import-document", summary="Import aktu prawnego z pliku", response_model=list[RuleOut], status_code=201, responses=UPLOAD_ERRORS)
 def import_rule_document(
     file: UploadFile = File(description=".pdf / .docx / .txt z ustawą, zarządzeniem lub wzorem pisma"),
     title: str | None = Form(None),
@@ -105,12 +105,12 @@ def _check_regex(pattern: str | None) -> None:
             raise BadRequest(f"Niepoprawne wyrażenie regularne: {exc}") from exc
 
 
-@router.get("/anonymization-categories", response_model=list[CategoryOut])
+@router.get("/anonymization-categories", summary="Kategorie danych do anonimizacji", response_model=list[CategoryOut])
 def list_categories(conn: sqlite3.Connection = Depends(db_dependency)):
     return [dict(row) for row in conn.execute("SELECT * FROM anonymization_categories ORDER BY id")]
 
 
-@router.post("/anonymization-categories", response_model=CategoryOut, status_code=201)
+@router.post("/anonymization-categories", summary="Dodanie kategorii anonimizacji", response_model=CategoryOut, status_code=201)
 def create_category(body: CategoryIn, conn: sqlite3.Connection = Depends(db_dependency)):
     _check_regex(body.regex)
     cursor = conn.execute(
@@ -120,7 +120,7 @@ def create_category(body: CategoryIn, conn: sqlite3.Connection = Depends(db_depe
     return _get(conn, "anonymization_categories", cursor.lastrowid, label="kategorii o id")
 
 
-@router.put("/anonymization-categories/{category_id}", response_model=CategoryOut)
+@router.put("/anonymization-categories/{category_id}", summary="Edycja kategorii anonimizacji", response_model=CategoryOut)
 def update_category(category_id: int, body: CategoryUpdate, conn: sqlite3.Connection = Depends(db_dependency)):
     _get(conn, "anonymization_categories", category_id, label="kategorii o id")
     changes = body.model_dump(exclude_unset=True)
@@ -131,12 +131,12 @@ def update_category(category_id: int, body: CategoryUpdate, conn: sqlite3.Connec
 
 # --- komórki UMB -----------------------------------------------------------------------------------
 
-@router.get("/departments", response_model=list[DepartmentOut])
+@router.get("/departments", summary="Wydziały i biura UMB", response_model=list[DepartmentOut])
 def list_departments(conn: sqlite3.Connection = Depends(db_dependency)):
     return departments.list_all(conn)
 
 
-@router.post("/departments", response_model=DepartmentOut, status_code=201)
+@router.post("/departments", summary="Dodanie wydziału", response_model=DepartmentOut, status_code=201)
 def create_department(body: DepartmentIn, conn: sqlite3.Connection = Depends(db_dependency)):
     code = body.code.strip().upper()
     if code in departments.names(conn):
@@ -148,7 +148,7 @@ def create_department(body: DepartmentIn, conn: sqlite3.Connection = Depends(db_
     return _get(conn, "departments", code, key_column="code", label="komórki")
 
 
-@router.put("/departments/{code}", response_model=DepartmentOut)
+@router.put("/departments/{code}", summary="Edycja wydziału", response_model=DepartmentOut)
 def update_department(code: str, body: DepartmentUpdate, conn: sqlite3.Connection = Depends(db_dependency)):
     code = code.upper()
     _get(conn, "departments", code, key_column="code", label="komórki")
@@ -158,13 +158,13 @@ def update_department(code: str, body: DepartmentUpdate, conn: sqlite3.Connectio
 
 # --- podmioty spoza urzędu ----------------------------------------------------------------------------
 
-@router.get("/external-entities", response_model=list[ExternalEntityOut])
+@router.get("/external-entities", summary="Podmioty spoza urzędu", response_model=list[ExternalEntityOut])
 def list_entities(conn: sqlite3.Connection = Depends(db_dependency)):
     """Podmioty, do których UMB odsyła wnioskodawcę (np. ZDMiKP, WKZ, Schronisko) — dane z pism UMB."""
     return [dict(row) for row in conn.execute("SELECT * FROM external_entities ORDER BY id")]
 
 
-@router.post("/external-entities", response_model=ExternalEntityOut, status_code=201)
+@router.post("/external-entities", summary="Dodanie podmiotu zewnętrznego", response_model=ExternalEntityOut, status_code=201)
 def create_entity(body: ExternalEntityIn, conn: sqlite3.Connection = Depends(db_dependency)):
     cursor = conn.execute(
         "INSERT INTO external_entities(name, name_genitive, contact, keywords, is_active) VALUES (?, ?, ?, ?, ?)",
@@ -173,7 +173,7 @@ def create_entity(body: ExternalEntityIn, conn: sqlite3.Connection = Depends(db_
     return _get(conn, "external_entities", cursor.lastrowid, label="podmiotu o id")
 
 
-@router.put("/external-entities/{entity_id}", response_model=ExternalEntityOut)
+@router.put("/external-entities/{entity_id}", summary="Edycja podmiotu zewnętrznego", response_model=ExternalEntityOut)
 def update_entity(entity_id: int, body: ExternalEntityUpdate, conn: sqlite3.Connection = Depends(db_dependency)):
     _get(conn, "external_entities", entity_id, label="podmiotu o id")
     db.update_row(conn, "external_entities", "id", entity_id, body.model_dump(exclude_unset=True))
@@ -182,13 +182,13 @@ def update_entity(entity_id: int, body: ExternalEntityUpdate, conn: sqlite3.Conn
 
 # --- archiwum spraw -------------------------------------------------------------------------------------
 
-@router.post("/cases/manual", response_model=ManualCaseOut, status_code=201)
+@router.post("/cases/manual", summary="Dodanie sprawy do archiwum", response_model=ManualCaseOut, status_code=201)
 def add_manual_case(body: ManualCase, conn: sqlite3.Connection = Depends(db_dependency)):
     """Dopisuje wzorcową sprawę archiwalną (z udzieloną odpowiedzią) — zasila wyszukiwanie podobnych spraw."""
     return case_workflow.add_archived_case(conn, body)
 
 
-@router.post("/cases/import-excel", response_model=ImportResult, responses=UPLOAD_ERRORS)
+@router.post("/cases/import-excel", summary="Import rejestru z Excela", response_model=ImportResult, responses=UPLOAD_ERRORS)
 def import_excel(
     file: UploadFile = File(description="Rejestr wniosków .xlsx"),
     update_existing: bool = Form(True, description="Aktualizuj sprawy o tym samym znaku zamiast je pomijać"),

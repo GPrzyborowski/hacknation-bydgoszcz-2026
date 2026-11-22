@@ -68,6 +68,12 @@
   color: var(--text-secondary);
 }
 
+.model-badge.is-missing {
+  border-color: var(--danger);
+  background: var(--danger-tint);
+  color: var(--danger);
+}
+
 /* --- Treść --- */
 .main {
   flex: 1;

@@ -24,14 +24,14 @@ def draft_from_reply(conn: sqlite3.Connection, case_id: int, department: str | N
     example = next((case["response_text"] for case in similar if case["response_text"]), None)
 
     # Model wywołujemy przed pierwszym zapisem, żeby transakcja nie blokowała bazy na czas jego pracy.
-    draft_text, llm_candidates, llm_used = analysis.draft_reply(
+    draft_text, llm_candidates = analysis.draft_reply(
         dict(row), row["request_text"] or "", parsed, replies, rules, [c["name"] for c in categories], dept_names, example
     )
 
     case_store.add_reply(conn, case_id, department, filename, text)
     if answered := dept_tracking.mark_answered(conn, case_id, department):
         case_store.log_event(conn, case_id, "wydzial_odpowiedzial", answered)
-    draft = save_draft(conn, row, categories, draft_text, llm_candidates, llm_used, LetterKind.odpowiedz)
+    draft = save_draft(conn, row, categories, draft_text, llm_candidates, True, LetterKind.odpowiedz)
     case_store.set_status(
         conn, case_id, CaseStatus.odpowiedz_w_przygotowaniu,
         event="odpowiedz_wydzialu", detail=f"{department or 'wydział'}{' — ' + filename if filename else ''}",

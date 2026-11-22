@@ -1,5 +1,5 @@
 ---
-name: Asystent UDIP
+name: UDIPilot
 description: Polish e-government intake craft for officials handling public-information requests; plain forms, one institutional blue, deadlines always in view.
 colors:
   bg: "#ffffff"
@@ -181,7 +181,7 @@ components:
     padding: "20px 0"
 ---
 
-# Design System: Asystent UDIP
+# Design System: UDIPilot
 
 ## Overview
 

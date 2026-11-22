@@ -33,7 +33,7 @@ export function AnalysisPanel({ analysis, fileName, receivedAt, onReanalyze, onR
         </h2>
         <p className="field-hint">
           {fileName} · {extraction.used_ocr ? 'odczyt OCR ze skanu' : 'odczyt tekstu dokumentu'} ·{' '}
-          {analysis.llm_used ? 'analiza modelu Gemini' : 'analiza regułowa (bez modelu)'}. Sprawdź dane przed rejestracją.
+          analiza modelu językowego. Sprawdź dane przed rejestracją.
         </p>
       </div>
 

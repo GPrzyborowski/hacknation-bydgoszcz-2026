@@ -1,28 +1,15 @@
-"""Zadania modelu językowego: przetworzenie wniosku i projekt odpowiedzi. Bez modelu — analiza regułowa."""
-import logging
-import re
-from collections.abc import Callable
-from functools import cached_property
+"""Zadania modelu Gemini: przetworzenie wniosku i projekt odpowiedzi na podstawie materiałów wydziałów."""
 from string import Template
-from typing import TypeVar
 
 import config
 from schemas import ParsedRequest
 from services import letters, llm
 from services.deadlines import parse_date
-from services.patterns import EMAIL, PL_LOWER, PL_UPPER, STREET_PREFIX
-
-log = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 PROMPT_TEXT_CHARS = 12000
 PROMPT_REQUEST_CHARS = 4000
 PROMPT_RULE_CHARS = 600
 PROMPT_EXAMPLE_CHARS = 2500
-SUBJECT_MAX_CHARS = 160
-MAX_QUESTIONS = 15
-APPLICANT_MAX_CHARS = 120
 
 CATEGORIES = [
     "inwestycje", "finanse i budżet", "zamówienia publiczne", "nieruchomości", "budownictwo", "edukacja",
@@ -30,19 +17,6 @@ CATEGORIES = [
     "rada miasta", "promocja", "zdrowie i pomoc społeczna", "podatki i opłaty", "organizacja urzędu", "inne",
 ]
 APPLICANT_TYPES = ["osoba fizyczna", "organizacja", "dziennikarz", "przedsiębiorca", "radny", "inny"]
-
-
-def _with_fallback(call: Callable[[], T], fallback: Callable[[str | None], T]) -> T:
-    """Wynik modelu albo wynik regułowy: bez klucza API (powód None) lub gdy Gemini zawiódł, a zapas jest włączony."""
-    try:
-        return call()
-    except llm.LLMDisabled:
-        return fallback(None)
-    except llm.LLMError as exc:
-        if not config.LLM_FALLBACK_HEURISTIC:
-            raise
-        log.warning("Gemini niedostępny, używam analizy regułowej: %s", exc.message)
-        return fallback(exc.message)
 
 
 # --- przetworzenie wniosku -----------------------------------------------------------------------
@@ -65,51 +39,27 @@ $departments
 Nie wymyślaj danych, których nie ma we wniosku — wtedy wpisz null.""")
 
 
-def parse_request(text: str, departments: list[dict]) -> tuple[dict, list[dict], bool]:
-    """Zwraca (przetworzone zgłoszenie, wydziały wskazane przez model, czy użyto modelu)."""
-
-    def with_model() -> tuple[dict, list[dict], bool]:
-        system = PARSE_PROMPT.substitute(
-            types=", ".join(APPLICANT_TYPES),
-            categories=", ".join(CATEGORIES),
-            departments="\n".join(f"{d['code']} – {d['name']} – {d['keywords']}" for d in departments),
-        )
-        data = llm.chat_json(system, f'TREŚĆ WNIOSKU:\n"""\n{text[:PROMPT_TEXT_CHARS]}\n"""')
-        return _normalize_parsed(data, text), list(data.get("sugerowane_wydzialy") or []), True
-
-    def without_model(failure: str | None) -> tuple[dict, list[dict], bool]:
-        parsed = heuristic_parse(text)
-        if failure:
-            parsed["uwagi"] = f"Model językowy niedostępny ({failure}) — użyto analizy heurystycznej. " + parsed["uwagi"]
-        return parsed, [], False
-
-    return _with_fallback(with_model, without_model)
+def parse_request(text: str, departments: list[dict]) -> tuple[dict, list[dict]]:
+    """Zwraca (przetworzone zgłoszenie, wydziały wskazane przez model)."""
+    system = PARSE_PROMPT.substitute(
+        types=", ".join(APPLICANT_TYPES),
+        categories=", ".join(CATEGORIES),
+        departments="\n".join(f"{d['code']} – {d['name']} – {d['keywords']}" for d in departments),
+    )
+    data = llm.chat_json(system, f'TREŚĆ WNIOSKU:\n"""\n{text[:PROMPT_TEXT_CHARS]}\n"""')
+    return _normalize_parsed(data), list(data.get("sugerowane_wydzialy") or [])
 
 
-class _LazyHeuristic:
-    """Wynik analizy regułowej liczony dopiero wtedy, gdy model czegoś nie uzupełnił."""
-
-    def __init__(self, text: str):
-        self._text = text
-
-    @cached_property
-    def result(self) -> dict:
-        return heuristic_parse(self._text)
-
-    def __getitem__(self, key: str):
-        return self.result[key]
-
-
-def _normalize_parsed(data: dict, text: str) -> dict:
-    fallback = _LazyHeuristic(text)
+def _normalize_parsed(data: dict) -> dict:
+    """Odpowiedź modelu w kształcie ParsedRequest: brakujące pola puste, typy ujednolicone."""
     parsed = {key: (None if data.get(key) in ("", "null", "brak") else data.get(key)) for key in ParsedRequest.model_fields}
 
     questions = parsed["pytania"]
     if isinstance(questions, str):
         questions = [questions]
-    parsed["pytania"] = [str(q).strip() for q in questions or [] if str(q).strip()] or fallback["pytania"]
-    parsed["temat_skrot"] = str(parsed["temat_skrot"] or fallback["temat_skrot"])
-    parsed["kategoria"] = str(parsed["kategoria"] or fallback["kategoria"])
+    parsed["pytania"] = [str(q).strip() for q in questions or [] if str(q).strip()]
+    parsed["temat_skrot"] = str(parsed["temat_skrot"] or "")
+    parsed["kategoria"] = str(parsed["kategoria"] or "inne")
     parsed["uwagi"] = str(parsed["uwagi"] or "")
     is_udip = parsed["czy_to_wniosek_udip"]
     parsed["czy_to_wniosek_udip"] = is_udip if isinstance(is_udip, bool) else str(is_udip).lower() in {"true", "tak", "1"}
@@ -117,175 +67,8 @@ def _normalize_parsed(data: dict, text: str) -> dict:
         letter_date, _ = parse_date(parsed["data_na_pismie"])
         parsed["data_na_pismie"] = letter_date.isoformat() if letter_date else None
     for key in ("wnioskodawca", "typ_wnioskodawcy", "adres_do_odpowiedzi", "forma_odpowiedzi"):
-        parsed[key] = str(parsed[key]).strip() if parsed[key] is not None else fallback[key]
+        parsed[key] = str(parsed[key]).strip() if parsed[key] is not None else None
     return parsed
-
-
-# --- analiza regułowa ------------------------------------------------------------------------------
-
-_EMAIL = re.compile(EMAIL)
-_ADDRESS = re.compile(rf"{STREET_PREFIX}\s*[^\n,]{{2,40}}\d+[a-zA-Z]?(?:/\d+)?(?:,?\s*\d{{2}}-\d{{3}}\s+\w+)?", re.IGNORECASE)
-_PERSON = re.compile(rf"(?:[{PL_UPPER}][{PL_LOWER}]+|[{PL_UPPER}]\.)(?:[ -][{PL_UPPER}][{PL_LOWER}]+){{1,2}}")
-_ORGANIZATION = re.compile(
-    rf"((?:Stowarzyszenie|Fundacja|Parafia|Redakcja|Proboszcz Parafii|Spółdzielnia|Towarzystwo)\s[^,\n]{{3,80}}"
-    rf"|[{PL_UPPER}][\w-]+(?:\s[{PL_UPPER}][\w-]+)*\s(?:S\.A\.|sp\. z o\.o\.|Sp\. z o\.o\.))"
-)
-_CLOSING = re.compile(r"^(?:--\s*)?(?:pozdrawiam|z poważaniem|z wyrazami szacunku|łączę wyrazy szacunku|z wyrazami)\b[\s|,]*", re.IGNORECASE)
-_SIGNATURE_MAX_CHARS = 70
-_LIST_MARKER = re.compile(r"^(\d+[.)]|[a-z][.)]|[-•–])\s+")
-_SUBJECT_PREFIX = re.compile(r"^(dotyczy|dot\.|w sprawie|temat)\s*:?\s*", re.IGNORECASE)
-
-_CATEGORY_KEYWORDS = {
-    "środowisko": ["zwierz", "drzew", "środowisk", "zieleń"],
-    "gospodarka odpadami": ["odpad", "śmieci", "śmieć"],
-    "inwestycje": ["inwestyc", "remont", "przebudow", "budow"],
-    "zamówienia publiczne": ["przetarg", "zamówieni", "wykonawc"],
-    "finanse i budżet": ["budżet", "wydatk", "koszt", "kwot"],
-    "nieruchomości": ["nieruchomoś", "działk", "dzierżaw", "najem"],
-    "zatrudnienie i kadry": ["zatrudni", "wynagrodz", "etat", "pracownik"],
-    "edukacja": ["szkoł", "przedszkol", "oświat"],
-    "kultura": ["kultur", "teatr", "festiwal", "rzeźb", "pomnik", "zabyt"],
-    "promocja": ["promocj", "reklam"],
-    "rada miasta": ["radn", "rada miasta", "sesj"],
-}
-
-
-def _organization(text: str) -> str | None:
-    match = _ORGANIZATION.search(text)
-    return match.group(1).strip() if match else None
-
-
-def _applicant(text: str, lines: list[str]) -> str | None:
-    """Wnioskodawca wg wzorców z wniosków testowych UMB: pole „Wnioskodawca:”, podpis po formule grzecznościowej
-    („Pozdrawiam | Ewa Góra”, „E. Góra”), nazwa organizacji na końcu albo w pierwszym zdaniu, wreszcie adres e-mail."""
-    labelled = re.search(r"(?:wnioskodawca|imię i nazwisko)\s*[:\-]\s*(.+)", text, re.IGNORECASE)
-    if labelled:
-        return labelled.group(1).strip()[:APPLICANT_MAX_CHARS]
-
-    tail = [line for line in lines[-8:] if line.strip("- ")]
-    for index, line in enumerate(tail):
-        if not _CLOSING.match(line):
-            continue
-        rest = _CLOSING.sub("", line).strip(" |")
-        for candidate in [rest] if rest else tail[index + 1 : index + 3]:
-            if organization := _organization(candidate):
-                return organization
-            if _PERSON.fullmatch(candidate.strip()):
-                return candidate.strip()
-    for line in reversed(tail):
-        if len(line) < _SIGNATURE_MAX_CHARS and (organization := _organization(line)):
-            return organization
-        if _PERSON.fullmatch(line.strip()):
-            return line.strip()
-    for line in lines[:6]:
-        if match := _ORGANIZATION.match(line):
-            return match.group(1).strip().rstrip(",")
-    # Wniosek mailowy bez podpisu — rejestr UMB wpisuje wtedy adres e-mail (sprawa BKS.IV.1431.17.2026).
-    email = _EMAIL.search(text)
-    return email.group(0) if email else None
-
-
-def _questions(text: str, lines: list[str]) -> list[str]:
-    questions = []
-    for line in lines:
-        if line.endswith("?") or _LIST_MARKER.match(line):
-            question = _LIST_MARKER.sub("", line)
-            if len(question) > 8:
-                questions.append(question)
-    if not questions:
-        request = re.search(
-            r"(?:proszę o|wnoszę o|wnioskuję o|zwracam się z (?:uprzejmą )?prośbą o)\s+(.{10,400}?)(?:\.|$)",
-            text, re.IGNORECASE | re.DOTALL,
-        )
-        if request:
-            questions.append(" ".join(request.group(1).split()))
-    return questions[:MAX_QUESTIONS]
-
-
-def _subject(lines: list[str], questions: list[str]) -> str:
-    # „Temat:” z nagłówka e-maila bywa pusty (wniosek BKS.IV.1431.543.2026), więc wymagamy treści po prefiksie.
-    labelled = next((line for line in lines if re.match(r"^(dotyczy|dot\.|w sprawie|temat)\b\s*:?\s*\S.{8,}", line, re.IGNORECASE)), None)
-    if labelled:
-        return _SUBJECT_PREFIX.sub("", labelled)
-    scope = re.search(
-        r"informacji publicznej\s+(?:w zakresie|na temat|dotycząc\w*|dot\.)\s+(.{10,200}?)(?:[.:;]|\s+z następujących|$)",
-        " ".join(lines), re.IGNORECASE,
-    )
-    if scope:
-        return scope.group(1)
-    if questions:
-        return questions[0]
-    meaningful = [line for line in lines if len(line) > 25 and not re.match(r"^(dzień dobry|witam|szanown|biuro|urząd)", line, re.IGNORECASE)]
-    return meaningful[0] if meaningful else (lines[0] if lines else "")
-
-
-def _reply_form(lowered: str) -> str:
-    if "e-doręcze" in lowered or "e-dorecze" in lowered:
-        return "e-Doręczenia"
-    if "e-mail" in lowered or "mail" in lowered or "elektroniczn" in lowered:
-        return "email"
-    if "poczt" in lowered or "listown" in lowered:
-        return "poczta"
-    if "epuap" in lowered:
-        return "ePUAP"
-    return "nieokreślona"
-
-
-def _applicant_type(lowered: str, applicant: str | None) -> str | None:
-    if any(marker in lowered for marker in ("redakc", "dziennikar", "gazet", "portal")):
-        return "dziennikarz"
-    if applicant and _ORGANIZATION.search(applicant):
-        return "organizacja"
-    if re.search(r"\b(fundacja|stowarzyszenie|spółdzielnia|parafia)\b", lowered[:300]):
-        return "organizacja"
-    return "osoba fizyczna" if applicant else None
-
-
-def _category(lowered: str) -> str:
-    for category, stems in _CATEGORY_KEYWORDS.items():
-        if any(re.search(r"\b" + re.escape(stem), lowered) for stem in stems):
-            return category
-    return "inne"
-
-
-def heuristic_parse(text: str) -> dict:
-    """Ekstrakcja regułowa — działa bez modelu językowego (tryb bez klucza i zapas przy awarii Gemini)."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    lowered = text.lower()
-    email = _EMAIL.search(text)
-    address = _ADDRESS.search(text)
-    applicant = _applicant(text, lines)
-    questions = _questions(text, lines)
-
-    letter_date = None
-    for line in lines[:12]:
-        if re.search(r"\b(dnia|dn\.|\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}-\d{2}-\d{2})", line):
-            parsed, _ = parse_date(line)
-            if parsed:
-                letter_date = parsed.isoformat()
-                break
-
-    notes = []
-    if not any(phrase in lowered for phrase in ("informacji publicznej", "u.d.i.p", "dostępie do informacji")):
-        notes.append("Brak wprost powołania się na u.d.i.p. — zweryfikuj tryb.")
-    if re.search(r"zestawieni|analiz|wylicz|porównani|sumaryczn", lowered):
-        notes.append("Możliwa informacja przetworzona (art. 3 ust. 1 pkt 1 u.d.i.p.).")
-    if not (email or address):
-        notes.append("Brak adresu do odpowiedzi.")
-    notes.append("Analiza heurystyczna (bez modelu językowego) — sprawdź dane.")
-
-    return {
-        "wnioskodawca": applicant,
-        "typ_wnioskodawcy": _applicant_type(lowered, applicant),
-        "adres_do_odpowiedzi": email.group(0) if email else (address.group(0).strip() if address else None),
-        "forma_odpowiedzi": _reply_form(lowered),
-        "data_na_pismie": letter_date,
-        "temat_skrot": _subject(lines, questions)[:SUBJECT_MAX_CHARS],
-        "pytania": questions,
-        "kategoria": _category(lowered),
-        "czy_to_wniosek_udip": "informac" in lowered and "publiczn" in lowered,
-        "uwagi": " ".join(notes),
-    }
 
 
 # --- projekt odpowiedzi ------------------------------------------------------------------------------
@@ -340,26 +123,17 @@ def draft_reply(
     categories: list[str],
     dept_names: list[str],
     example_response: str | None = None,
-) -> tuple[str, list[dict], bool]:
-    """Zwraca (treść projektu, fragmenty do anonimizacji wskazane przez model, czy użyto modelu)."""
+) -> tuple[str, list[dict]]:
+    """Zwraca (treść projektu, fragmenty do anonimizacji wskazane przez model)."""
     form = letters.addressee_form(case.get("applicant"), parsed.get("typ_wnioskodawcy"))
     questions = parsed.get("pytania") or []
+    addressee = letters.ADDRESSEE[form]
+    system = DRAFT_PROMPT.substitute(salutation=addressee["salutation"], by=addressee["by"], categories="; ".join(categories))
+    user = _draft_prompt_input(case, request_text, questions, replies, rules, dept_names, example_response)
+    data = llm.chat_json(system, user, max_tokens=config.LLM_DRAFT_MAX_TOKENS)
+    text = str(data.get("draft_text") or "").strip()
+    if not text:
+        raise llm.LLMError("Model nie zwrócił treści projektu odpowiedzi.")
+    candidates = [c for c in data.get("anonymization_candidates") or [] if isinstance(c, dict)]
+    return text, candidates
 
-    def with_model() -> tuple[str, list[dict], bool]:
-        addressee = letters.ADDRESSEE[form]
-        system = DRAFT_PROMPT.substitute(salutation=addressee["salutation"], by=addressee["by"], categories="; ".join(categories))
-        user = _draft_prompt_input(case, request_text, questions, replies, rules, dept_names, example_response)
-        data = llm.chat_json(system, user, max_tokens=config.LLM_DRAFT_MAX_TOKENS)
-        text = str(data.get("draft_text") or "").strip()
-        if not text:
-            raise llm.LLMError("Model nie zwrócił treści projektu odpowiedzi.")
-        candidates = [c for c in data.get("anonymization_candidates") or [] if isinstance(c, dict)]
-        return text, candidates, True
-
-    def without_model(failure: str | None) -> tuple[str, list[dict], bool]:
-        text = letters.answer(case, form, questions, replies, dept_names)
-        if failure:
-            text = f"[UWAGA: model językowy niedostępny ({failure}) — projekt z szablonu UMB]\n{text}"
-        return text, [], False
-
-    return _with_fallback(with_model, without_model)

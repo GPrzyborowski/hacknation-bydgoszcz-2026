@@ -1,6 +1,14 @@
-# Backend — Asystent UDIP
+# Backend — UDIPilot
 
-FastAPI + SQLite (FTS5). Swagger UI: http://localhost:8000/docs
+FastAPI + SQLite (FTS5).
+
+## Dokumentacja API (Swagger)
+
+- **Swagger UI:** http://localhost:8000/docs — opis przepływu sprawy, każdy endpoint z polskim opisem,
+  przycisk *Try it out* (np. wysłanie pliku wniosku do `/api/intake/analyze`).
+- **ReDoc:** http://localhost:8000/redoc
+- **Specyfikacja OpenAPI bez uruchamiania:** [`docs/openapi.json`](../docs/openapi.json), odświeżana skryptem
+  `python backend/scripts/export_openapi.py`.
 
 ## Uruchomienie
 
@@ -13,19 +21,23 @@ Model językowy: **Google Gemini** przez endpoint zgodny z OpenAI. Wystarczy klu
 [aistudio.google.com/apikey](https://aistudio.google.com/apikey) w `.env` (`GEMINI_API_KEY=AIza…`).
 Po zmianie `.env`: `docker compose up -d --force-recreate backend`.
 
-Bez klucza, a także gdy Gemini nie odpowie lub zgłosi limit zapytań, backend przechodzi na analizę regułową
-z ostrzeżeniem — upload nigdy nie wisi. `OFFLINE_MODE=true` blokuje wysyłkę treści do Gemini (403).
+Analiza wniosku i projekt odpowiedzi zawsze pochodzą z Gemini. Przy limicie zapytań lub chwilowej awarii
+(429, 5xx) backend ponawia wywołanie po 2 i 5 s; gdy to nie pomoże, zwraca czytelny błąd 502, a interfejs
+proponuje ponowienie. Bez klucza endpointy modelu zwracają 503 z instrukcją, a nagłówek aplikacji pokazuje
+„Brak klucza Gemini”. `OFFLINE_MODE=true` blokuje wysyłkę treści do Gemini (403).
 Na hackathonie do Gemini trafiają wyłącznie dane testowe organizatora.
+
+Adres modelu (`LLM_BASE_URL`) jest konfigurowalny, a klient korzysta z API zgodnego z OpenAI Chat Completions —
+docelowy model zamknięty, działający bez dostępu do Internetu, podłącza się zmianą konfiguracji, bez zmian w kodzie.
 
 ### Zmienne środowiskowe
 
 | Zmienna | Domyślnie | Znaczenie |
 |---|---|---|
-| `GEMINI_API_KEY` | — | klucz Google AI Studio; bez niego analiza regułowa |
+| `GEMINI_API_KEY` | — | klucz Google AI Studio (wymagany) |
 | `LLM_MODEL` | `gemini-2.5-flash` | model Gemini |
 | `LLM_REASONING_EFFORT` | `none` | wyłącza „myślenie” Gemini 2.5 Flash (szybciej, JSON nie jest ucinany) |
 | `LLM_TIMEOUT`, `LLM_MAX_TOKENS`, `LLM_DRAFT_MAX_TOKENS` | `90`, `4096`, `8192` | limity wywołań modelu |
-| `LLM_FALLBACK_HEURISTIC` | `true` | przy awarii Gemini analiza regułowa zamiast błędu 502 |
 | `OFFLINE_MODE` | `false` | `true` blokuje wysyłkę treści do Gemini |
 | `CASE_NUMBER_PREFIX` | `BKS.IV.1431` | prefiks znaku sprawy nadawanego automatycznie |
 | `MAX_UPLOAD_MB` | `20` | limit rozmiaru pliku |
@@ -40,7 +52,7 @@ Na hackathonie do Gemini trafiają wyłącznie dane testowe organizatora.
 - `bootstrap.py` — migracje i dane startowe przy uruchomieniu.
 - `routers/` — cienkie endpointy; `services/` — logika: `case_workflow` (tok sprawy), `drafting` (pisma),
   `case_views` (rejestr i karta sprawy), `case_store` (zapis), `dept_tracking` (odpowiedzi wydziałów),
-  `deadlines` (terminy ustawowe), `letters` (szablony pism UMB), `analysis` + `llm` (Gemini), `anonymization`,
+  `deadlines` (terminy ustawowe), `letters` (szablony pism UMB), `analysis` + `llm` (Gemini: prompty i klient), `anonymization`,
   `extraction` (PDF/DOCX/OCR), `search` (podobne sprawy), `excel_import`, `documents` (DOCX/PDF).
 - Błędy domenowe (`errors.py`) zamienia na odpowiedzi HTTP jeden handler w `main.py`.
 

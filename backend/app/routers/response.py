@@ -18,6 +18,7 @@ TEXT_MIME = "text/plain; charset=utf-8"
 
 @router.post(
     "/generate",
+    summary="Plik pisma DOCX/PDF z anonimizacją",
     response_class=Response,
     responses={200: {"content": {documents.DOCX_MIME: {}, documents.PDF_MIME: {}, TEXT_MIME: {}}, "description": "Plik pisma"}},
 )
@@ -54,7 +55,7 @@ def generate(body: GenerateRequest, conn: sqlite3.Connection = Depends(db_depend
     )
 
 
-@router.post("/send", response_model=SendResponse)
+@router.post("/send", summary="Odnotowanie wysłania pisma", response_model=SendResponse)
 def send(body: SendRequest, conn: sqlite3.Connection = Depends(db_dependency)):
     """Odnotowuje wysłanie pisma i zapisuje je w aktach — po zamaskowaniu zaznaczonych fragmentów. Odpowiedź
     zamyka sprawę i zasila archiwum podobnych spraw; kwerenda i doprecyzowanie pozostawiają sprawę w toku."""
@@ -83,7 +84,7 @@ def send(body: SendRequest, conn: sqlite3.Connection = Depends(db_dependency)):
     return {"case_id": body.case_id, "status": CaseStatus.odpowiedz_wyslana, "response_date": response_date}
 
 
-@router.post("/anonymize-preview", response_model=list[AnonymizationCandidate])
+@router.post("/anonymize-preview", summary="Kandydaci do anonimizacji po edycji", response_model=list[AnonymizationCandidate])
 def anonymize_preview(body: AnonymizePreviewRequest, conn: sqlite3.Connection = Depends(db_dependency)):
     """Kandydaci do anonimizacji po ręcznej edycji pisma (wzorce i znane osoby, bez modelu językowego)."""
     return anonymization.find_candidates(body.text, anonymization.load_categories(conn), known_people=body.known_people)

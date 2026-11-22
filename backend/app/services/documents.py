@@ -16,7 +16,7 @@ from services.deadlines import format_long
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PDF_MIME = "application/pdf"
-DRAFT_FOOTER = "Projekt pisma przygotowany z pomocą Asystenta UDIP — wymaga weryfikacji i podpisu urzędnika."
+DRAFT_FOOTER = "Projekt pisma przygotowany z pomocą UDIPilota — wymaga weryfikacji i podpisu urzędnika."
 LETTERHEAD_TITLE_LINES = 2
 
 Segments = tuple[tuple[str, bool], ...]

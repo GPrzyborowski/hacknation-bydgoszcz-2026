@@ -23,7 +23,7 @@ SEED_FILE = Path(os.getenv("SEED_FILE", BASE_DIR / "seed" / "umb_demo.json"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 CORS_ORIGINS = _env_list("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 
-# Model językowy: Google Gemini przez endpoint zgodny z OpenAI. Bez klucza API działa analiza regułowa.
+# Model językowy: Google Gemini przez endpoint zgodny z OpenAI. Klucz jest wymagany do analizy wniosków i projektów pism.
 LLM_BASE_URL = (os.getenv("LLM_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL") or "gemini-2.5-flash"
 LLM_API_KEY = (os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY") or "").strip().strip('"')
@@ -33,8 +33,6 @@ LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 LLM_DRAFT_MAX_TOKENS = int(os.getenv("LLM_DRAFT_MAX_TOKENS", "8192"))
 # "none" wyłącza „myślenie” Gemini 2.5 Flash: odpowiedź jest szybsza, a JSON nie zostaje ucięty limitem tokenów.
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "none")
-# Gdy Gemini nie odpowie, analiza przechodzi na reguły (z ostrzeżeniem) zamiast kończyć się błędem 502.
-LLM_FALLBACK_HEURISTIC = _env_bool("LLM_FALLBACK_HEURISTIC", True)
 # true = treść wniosków nie może opuścić serwera, więc każde wywołanie Gemini kończy się błędem 403.
 OFFLINE_MODE = _env_bool("OFFLINE_MODE", False)
 

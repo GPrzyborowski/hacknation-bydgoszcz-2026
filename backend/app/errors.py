@@ -35,3 +35,7 @@ class Unprocessable(AppError):
 
 class BadGateway(AppError):
     status_code = 502
+
+
+class ServiceUnavailable(AppError):
+    status_code = 503

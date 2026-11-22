@@ -13,14 +13,15 @@ router = APIRouter(tags=["0. System"])
 MAX_CALENDAR_RANGE_DAYS = 400
 
 
-@router.get("/", response_model=Health)
+@router.get("/", summary="Stan backendu i modelu", response_model=Health)
 def health():
     """Czy backend działa, czy wolno wysyłać treść do modelu (OFFLINE_MODE) i z jakim modelem pracuje."""
     return {"status": "ok", "offline_mode": config.OFFLINE_MODE, "model": llm.model_name(), "llm_enabled": llm.enabled()}
 
 
-@router.get("/api/config", response_model=AppConfig)
+@router.get("/api/config", summary="Ustawienia dla interfejsu", response_model=AppConfig)
 def app_config():
+    """Prefiks znaku sprawy, dozwolone formaty i limit plików, liczby dni z przepisów oraz model — frontend nie trzyma tych wartości u siebie."""
     return {
         "case_number_prefix": config.CASE_NUMBER_PREFIX,
         "max_upload_mb": config.MAX_UPLOAD_MB,
@@ -37,13 +38,13 @@ def app_config():
     }
 
 
-@router.get("/api/deadlines/preview", response_model=DeadlineSuggestion)
+@router.get("/api/deadlines/preview", summary="Podgląd terminu odpowiedzi", response_model=DeadlineSuggestion)
 def deadline_preview(received: date = Query(description="Data wpływu wniosku (RRRR-MM-DD).")):
     """Termin odpowiedzi liczony tak samo jak przy rejestracji — do podglądu w formularzu."""
     return deadlines.suggestion(received)
 
 
-@router.get("/api/deadlines/non-working-days", response_model=list[date])
+@router.get("/api/deadlines/non-working-days", summary="Dni wolne od pracy w zakresie dat", response_model=list[date])
 def non_working_days(start: date = Query(alias="from"), end: date = Query(alias="to")):
     """Soboty, niedziele i święta ustawowe w podanym zakresie — do wyróżnienia w kalendarium."""
     if end < start or (end - start).days > MAX_CALENDAR_RANGE_DAYS:

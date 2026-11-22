@@ -1,0 +1,4676 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "UDIPilot — API",
+    "description": "\nObsługa wniosków o udostępnienie informacji publicznej (u.d.i.p.) w Urzędzie Miasta Bydgoszczy.\nAPI przygotowuje materiały i podpowiedzi, ale **niczego samo nie wysyła** — ani do wydziałów, ani do\nwnioskodawców. Ostateczną decyzję zawsze podejmuje urzędnik.\n\n### Przepływ sprawy\n1. **Przyjęcie** — `POST /api/intake/analyze`: odczyt pliku (PDF, Word, skan z OCR), analiza modelem Gemini,\n   podobne sprawy z archiwum, propozycja wydziałów i termin. Nic jeszcze nie jest rejestrowane.\n2. **Rejestracja** — `POST /api/cases/register`: sprawa trafia do rejestru z terminem 14 dni\n   (art. 13 ust. 1 u.d.i.p.) i treścią próśb do wydziałów do skopiowania.\n3. **Wydziały** — `POST /api/cases/{id}/department-reply`: materiał z wydziału → projekt odpowiedzi w układzie\n   pism BKS z kandydatami do anonimizacji. Statusy wydziałów i prośby o uszczegółowienie: `/departments`.\n4. **Pisma w toku** — `POST /api/cases/{id}/letter`: kwerenda (przedłużenie do 2 miesięcy, art. 13 ust. 2),\n   wezwanie do doprecyzowania, wskazanie właściwego podmiotu.\n5. **Odpowiedź** — `POST /api/response/generate` (DOCX/PDF z maskami), `POST /api/response/send`\n   (odnotowanie wysyłki, zanonimizowana treść zasila archiwum podobnych spraw).\n\n### Szybki test\n`GET /api/cases` zwraca 10 spraw testowych UMB wczytanych przy pierwszym starcie. Plik wniosku do\n`/api/intake/analyze` można wysłać przyciskiem **Try it out**.\n",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/": {
+      "get": {
+        "tags": [
+          "0. System"
+        ],
+        "summary": "Stan backendu i modelu",
+        "description": "Czy backend działa, czy wolno wysyłać treść do modelu (OFFLINE_MODE) i z jakim modelem pracuje.",
+        "operationId": "health__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config": {
+      "get": {
+        "tags": [
+          "0. System"
+        ],
+        "summary": "Ustawienia dla interfejsu",
+        "description": "Prefiks znaku sprawy, dozwolone formaty i limit plików, liczby dni z przepisów oraz model — frontend nie trzyma tych wartości u siebie.",
+        "operationId": "app_config_api_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/deadlines/preview": {
+      "get": {
+        "tags": [
+          "0. System"
+        ],
+        "summary": "Podgląd terminu odpowiedzi",
+        "description": "Termin odpowiedzi liczony tak samo jak przy rejestracji — do podglądu w formularzu.",
+        "operationId": "deadline_preview_api_deadlines_preview_get",
+        "parameters": [
+          {
+            "name": "received",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "description": "Data wpływu wniosku (RRRR-MM-DD).",
+              "title": "Received"
+            },
+            "description": "Data wpływu wniosku (RRRR-MM-DD)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeadlineSuggestion"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/deadlines/non-working-days": {
+      "get": {
+        "tags": [
+          "0. System"
+        ],
+        "summary": "Dni wolne od pracy w zakresie dat",
+        "description": "Soboty, niedziele i święta ustawowe w podanym zakresie — do wyróżnienia w kalendarium.",
+        "operationId": "non_working_days_api_deadlines_non_working_days_get",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "title": "Response Non Working Days Api Deadlines Non Working Days Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/intake/analyze": {
+      "post": {
+        "tags": [
+          "1. Przyjęcie wniosku"
+        ],
+        "summary": "Analiza wniosku (OCR + Gemini)",
+        "description": "Odczytuje tekst (PDF: warstwa tekstowa albo OCR), przetwarza go modelem do `parsed_request`, szuka podobnych\nspraw w archiwum i podpowiada komórki UMB. Niczego nie rejestruje — robi to `POST /api/cases/register`.",
+        "operationId": "analyze_api_intake_analyze_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_analyze_api_intake_analyze_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntakeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Pusty plik, nieobsługiwany format albo uszkodzony dokument."
+          },
+          "413": {
+            "description": "Plik większy niż MAX_UPLOAD_MB."
+          },
+          "422": {
+            "description": "Brak warstwy tekstowej i brak możliwości wykonania OCR."
+          },
+          "403": {
+            "description": "OFFLINE_MODE=true — treść nie może zostać wysłana do Gemini."
+          },
+          "502": {
+            "description": "Gemini nie odpowiedział poprawnie (także po ponowieniach przy limicie zapytań)."
+          },
+          "503": {
+            "description": "Brak klucza GEMINI_API_KEY."
+          }
+        }
+      }
+    },
+    "/api/cases": {
+      "get": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Rejestr wniosków",
+        "description": "Sprawy od najstarszych z `days_remaining` i `urgency` do podświetlania pilnych.",
+        "operationId": "list_cases_api_cases_get",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Rok sprawy, np. 2026",
+              "title": "Year"
+            },
+            "description": "Rok sprawy, np. 2026"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Wyszukiwanie pełnotekstowe — wszystkie słowa muszą wystąpić",
+              "title": "Q"
+            },
+            "description": "Wyszukiwanie pełnotekstowe — wszystkie słowa muszą wystąpić"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CaseStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "open_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Tylko sprawy w toku (bez wysłanej odpowiedzi)",
+              "default": false,
+              "title": "Open Only"
+            },
+            "description": "Tylko sprawy w toku (bez wysłanej odpowiedzi)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CaseListItem"
+                  },
+                  "title": "Response List Cases Api Cases Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cases/years": {
+      "get": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Lata w rejestrze",
+        "description": "Lata, w których są sprawy — do przełącznika roku w rejestrze.",
+        "operationId": "list_years_api_cases_years_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array",
+                  "title": "Response List Years Api Cases Years Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cases/{case_id}": {
+      "get": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Karta sprawy",
+        "description": "Dane sprawy, statusy odpowiedzi wydziałów, dokumenty, materiały z wydziałów, projekty pism i historia zdarzeń.",
+        "operationId": "get_case_api_cases__case_id__get",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Korekta danych sprawy",
+        "description": "Korekta danych sprawy (termin, osoba odpowiedzialna, znak, wydziały…).",
+        "operationId": "update_case_api_cases__case_id__patch",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCase"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseListItem"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Usunięcie sprawy",
+        "description": "Usuwa sprawę wraz z dokumentami, projektami i historią.",
+        "operationId": "delete_case_api_cases__case_id__delete",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cases/register": {
+      "post": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Rejestracja wniosku",
+        "description": "Rejestruje wniosek po weryfikacji danych przez urzędnika. Z wydziałami → `zapytania_wyslane`,\nbez → `brak_dzialan`. Treść próśb do wydziałów to propozycja — nic nie jest wysyłane.",
+        "operationId": "register_case_api_cases_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterCase"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cases/{case_id}/status": {
+      "patch": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Zmiana statusu sprawy",
+        "description": "Ręczna zmiana statusu. Kwerenda bez terminu dostaje termin maksymalny (2 miesiące, art. 13 ust. 2).",
+        "operationId": "update_status_api_cases__case_id__status_patch",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StatusUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cases/{case_id}/department-reply": {
+      "post": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Materiał z wydziału → projekt odpowiedzi",
+        "description": "Zapisuje materiał z wydziału, ustawia status `odpowiedz_w_przygotowaniu` i przygotowuje projekt odpowiedzi\nze wszystkich dotychczasowych materiałów wraz z kandydatami do anonimizacji. Projekt sprawdza urzędnik.",
+        "operationId": "department_reply_api_cases__case_id__department_reply_post",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_department_reply_api_cases__case_id__department_reply_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Pusty plik, nieobsługiwany format albo uszkodzony dokument."
+          },
+          "413": {
+            "description": "Plik większy niż MAX_UPLOAD_MB."
+          },
+          "422": {
+            "description": "Brak warstwy tekstowej i brak możliwości wykonania OCR."
+          },
+          "403": {
+            "description": "OFFLINE_MODE=true — treść nie może zostać wysłana do Gemini."
+          },
+          "502": {
+            "description": "Gemini nie odpowiedział poprawnie (także po ponowieniach przy limicie zapytań)."
+          },
+          "503": {
+            "description": "Brak klucza GEMINI_API_KEY."
+          }
+        }
+      }
+    },
+    "/api/cases/{case_id}/letter": {
+      "post": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Projekt pisma (kwerenda, doprecyzowanie, brak dysponenta)",
+        "description": "Projekt pisma według wzorów BKS UMB: `kwerenda` (przedłużenie terminu, art. 13 ust. 2), `doprecyzowanie`\n(wezwanie, 7 dni), `nie_dysponent` (wskazanie podmiotu właściwego) albo `odpowiedz` (szablon odpowiedzi).",
+        "operationId": "create_letter_api_cases__case_id__letter_post",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LetterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cases/{case_id}/departments": {
+      "post": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Zapytanie kolejnego wydziału",
+        "description": "Dopisuje wydział do sprawy ze statusem „czeka na odpowiedź”.",
+        "operationId": "add_department_api_cases__case_id__departments_post",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepartmentAdd"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DepartmentStatusOut"
+                  },
+                  "title": "Response Add Department Api Cases  Case Id  Departments Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cases/{case_id}/departments/{code}": {
+      "patch": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Status odpowiedzi wydziału",
+        "description": "Statusy: `oczekuje`, `odpowiedzial`, `uszczegolowienie`.",
+        "operationId": "set_department_status_api_cases__case_id__departments__code__patch",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          },
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepartmentStatusUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DepartmentStatusOut"
+                  },
+                  "title": "Response Set Department Status Api Cases  Case Id  Departments  Code  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Usunięcie wydziału ze sprawy",
+        "description": "Usuwa wydział ze sprawy (np. dopisany omyłkowo).",
+        "operationId": "remove_department_api_cases__case_id__departments__code__delete",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          },
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DepartmentStatusOut"
+                  },
+                  "title": "Response Remove Department Api Cases  Case Id  Departments  Code  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cases/{case_id}/departments/{code}/clarification": {
+      "post": {
+        "tags": [
+          "2. Rejestr wniosków"
+        ],
+        "summary": "Prośba do wydziału o uszczegółowienie",
+        "description": "Prośba do wydziału o uszczegółowienie odpowiedzi. Zwraca treść do skopiowania — system jej nie wysyła.",
+        "operationId": "request_clarification_api_cases__case_id__departments__code__clarification_post",
+        "parameters": [
+          {
+            "name": "case_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Case Id"
+            }
+          },
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClarificationIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClarificationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/response/generate": {
+      "post": {
+        "tags": [
+          "3. Odpowiedź i anonimizacja"
+        ],
+        "summary": "Plik pisma DOCX/PDF z anonimizacją",
+        "description": "Nakłada zaznaczone anonimizacje (pozycje `active: false` są pomijane) i zwraca plik pisma. Projekt\nodpowiedzi przechodzi w status `przygotowana_odpowiedz`; oryginalne dane z masek nie trafiają do pliku.",
+        "operationId": "generate_api_response_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Plik pisma",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {},
+              "application/pdf": {},
+              "text/plain; charset=utf-8": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/response/send": {
+      "post": {
+        "tags": [
+          "3. Odpowiedź i anonimizacja"
+        ],
+        "summary": "Odnotowanie wysłania pisma",
+        "description": "Odnotowuje wysłanie pisma i zapisuje je w aktach — po zamaskowaniu zaznaczonych fragmentów. Odpowiedź\nzamyka sprawę i zasila archiwum podobnych spraw; kwerenda i doprecyzowanie pozostawiają sprawę w toku.",
+        "operationId": "send_api_response_send_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/response/anonymize-preview": {
+      "post": {
+        "tags": [
+          "3. Odpowiedź i anonimizacja"
+        ],
+        "summary": "Kandydaci do anonimizacji po edycji",
+        "description": "Kandydaci do anonimizacji po ręcznej edycji pisma (wzorce i znane osoby, bez modelu językowego).",
+        "operationId": "anonymize_preview_api_response_anonymize_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnonymizePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AnonymizationCandidate"
+                  },
+                  "type": "array",
+                  "title": "Response Anonymize Preview Api Response Anonymize Preview Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/rules": {
+      "get": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Przepisy i zarządzenia",
+        "operationId": "list_rules_api_knowledge_rules_get",
+        "parameters": [
+          {
+            "name": "active_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Active Only"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Szukaj w tytule, źródle i treści",
+              "title": "Q"
+            },
+            "description": "Szukaj w tytule, źródle i treści"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RuleOut"
+                  },
+                  "title": "Response List Rules Api Knowledge Rules Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Dodanie przepisu",
+        "operationId": "create_rule_api_knowledge_rules_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/rules/{rule_id}": {
+      "put": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Edycja przepisu",
+        "operationId": "update_rule_api_knowledge_rules__rule_id__put",
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RuleUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/rules/import-document": {
+      "post": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Import aktu prawnego z pliku",
+        "description": "Dzieli akt prawny na artykuły (Art. / §), żeby do projektu pisma trafiały tylko pasujące fragmenty.",
+        "operationId": "import_rule_document_api_knowledge_rules_import_document_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_rule_document_api_knowledge_rules_import_document_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RuleOut"
+                  },
+                  "type": "array",
+                  "title": "Response Import Rule Document Api Knowledge Rules Import Document Post"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Pusty plik, nieobsługiwany format albo uszkodzony dokument."
+          },
+          "413": {
+            "description": "Plik większy niż MAX_UPLOAD_MB."
+          },
+          "422": {
+            "description": "Brak warstwy tekstowej i brak możliwości wykonania OCR."
+          }
+        }
+      }
+    },
+    "/api/knowledge/anonymization-categories": {
+      "get": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Kategorie danych do anonimizacji",
+        "operationId": "list_categories_api_knowledge_anonymization_categories_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CategoryOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Categories Api Knowledge Anonymization Categories Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Dodanie kategorii anonimizacji",
+        "operationId": "create_category_api_knowledge_anonymization_categories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/anonymization-categories/{category_id}": {
+      "put": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Edycja kategorii anonimizacji",
+        "operationId": "update_category_api_knowledge_anonymization_categories__category_id__put",
+        "parameters": [
+          {
+            "name": "category_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Category Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/departments": {
+      "get": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Wydziały i biura UMB",
+        "operationId": "list_departments_api_knowledge_departments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DepartmentOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Departments Api Knowledge Departments Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Dodanie wydziału",
+        "operationId": "create_department_api_knowledge_departments_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepartmentIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepartmentOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/departments/{code}": {
+      "put": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Edycja wydziału",
+        "operationId": "update_department_api_knowledge_departments__code__put",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DepartmentUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DepartmentOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/external-entities": {
+      "get": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Podmioty spoza urzędu",
+        "description": "Podmioty, do których UMB odsyła wnioskodawcę (np. ZDMiKP, WKZ, Schronisko) — dane z pism UMB.",
+        "operationId": "list_entities_api_knowledge_external_entities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ExternalEntityOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Entities Api Knowledge External Entities Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Dodanie podmiotu zewnętrznego",
+        "operationId": "create_entity_api_knowledge_external_entities_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalEntityIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalEntityOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/external-entities/{entity_id}": {
+      "put": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Edycja podmiotu zewnętrznego",
+        "operationId": "update_entity_api_knowledge_external_entities__entity_id__put",
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Entity Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalEntityUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalEntityOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/cases/manual": {
+      "post": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Dodanie sprawy do archiwum",
+        "description": "Dopisuje wzorcową sprawę archiwalną (z udzieloną odpowiedzią) — zasila wyszukiwanie podobnych spraw.",
+        "operationId": "add_manual_case_api_knowledge_cases_manual_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualCase"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualCaseOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/knowledge/cases/import-excel": {
+      "post": {
+        "tags": [
+          "4. Baza wiedzy"
+        ],
+        "summary": "Import rejestru z Excela",
+        "description": "Import spraw z arkusza. Kolumny rozpoznawane po nagłówkach (Lp., znak, data wpływu, termin, wnioskodawca,\ntemat, wydział, osoba odpowiedzialna, data odpowiedzi, tryb, status, odpowiedź).",
+        "operationId": "import_excel_api_knowledge_cases_import_excel_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_excel_api_knowledge_cases_import_excel_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Pusty plik, nieobsługiwany format albo uszkodzony dokument."
+          },
+          "413": {
+            "description": "Plik większy niż MAX_UPLOAD_MB."
+          },
+          "422": {
+            "description": "Brak warstwy tekstowej i brak możliwości wykonania OCR."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnonymizationCandidate": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "start": {
+            "type": "integer",
+            "title": "Start"
+          },
+          "end": {
+            "type": "integer",
+            "title": "End"
+          },
+          "mask": {
+            "type": "string",
+            "title": "Mask"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "quote",
+          "category",
+          "reason",
+          "start",
+          "end",
+          "mask",
+          "active",
+          "source"
+        ],
+        "title": "AnonymizationCandidate"
+      },
+      "AnonymizationItem": {
+        "properties": {
+          "start": {
+            "type": "integer",
+            "title": "Start"
+          },
+          "end": {
+            "type": "integer",
+            "title": "End"
+          },
+          "mask": {
+            "type": "string",
+            "title": "Mask",
+            "default": "[ANONIMIZACJA]"
+          },
+          "active": {
+            "type": "boolean",
+            "title": "Active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "AnonymizationItem"
+      },
+      "AnonymizePreviewRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "known_people": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Known People",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "AnonymizePreviewRequest"
+      },
+      "AppConfig": {
+        "properties": {
+          "case_number_prefix": {
+            "type": "string",
+            "title": "Case Number Prefix"
+          },
+          "max_upload_mb": {
+            "type": "integer",
+            "title": "Max Upload Mb"
+          },
+          "request_extensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Request Extensions"
+          },
+          "knowledge_extensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Knowledge Extensions"
+          },
+          "spreadsheet_extensions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Spreadsheet Extensions"
+          },
+          "answer_days": {
+            "type": "integer",
+            "title": "Answer Days"
+          },
+          "soon_days": {
+            "type": "integer",
+            "title": "Soon Days",
+            "description": "Termin w ciągu tylu dni jest oznaczany jako zbliżający się (urgency = soon)."
+          },
+          "clarification_reply_days": {
+            "type": "integer",
+            "title": "Clarification Reply Days"
+          },
+          "clarification_deadline_days": {
+            "type": "integer",
+            "title": "Clarification Deadline Days",
+            "description": "Domyślny nowy termin przy wezwaniu do doprecyzowania."
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "llm_enabled": {
+            "type": "boolean",
+            "title": "Llm Enabled"
+          },
+          "offline_mode": {
+            "type": "boolean",
+            "title": "Offline Mode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "case_number_prefix",
+          "max_upload_mb",
+          "request_extensions",
+          "knowledge_extensions",
+          "spreadsheet_extensions",
+          "answer_days",
+          "soon_days",
+          "clarification_reply_days",
+          "clarification_deadline_days",
+          "model",
+          "llm_enabled",
+          "offline_mode"
+        ],
+        "title": "AppConfig",
+        "description": "Ustawienia, których potrzebuje interfejs, żeby nie powielać konfiguracji backendu."
+      },
+      "Body_analyze_api_intake_analyze_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "Wniosek: .pdf, .docx, .doc lub skan .jpg/.png/.tiff"
+          },
+          "received_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At",
+            "description": "Data wpływu (RRRR-MM-DD) — od niej liczony jest termin."
+          },
+          "manual_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manual Text",
+            "description": "Treść wpisana przez urzędnika, gdy skan jest nieczytelny dla OCR."
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_analyze_api_intake_analyze_post"
+      },
+      "Body_department_reply_api_cases__case_id__department_reply_post": {
+        "properties": {
+          "file": {
+            "anyOf": [
+              {
+                "type": "string",
+                "contentMediaType": "application/octet-stream"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File",
+            "description": ".docx / .pdf / .doc / skan z wydziału"
+          },
+          "reply_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply Text",
+            "description": "Treść odpowiedzi wpisana lub wklejona ręcznie"
+          },
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department",
+            "description": "Symbol komórki, np. WIM (opcjonalnie)"
+          }
+        },
+        "type": "object",
+        "title": "Body_department_reply_api_cases__case_id__department_reply_post"
+      },
+      "Body_import_excel_api_knowledge_cases_import_excel_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": "Rejestr wniosków .xlsx"
+          },
+          "update_existing": {
+            "type": "boolean",
+            "title": "Update Existing",
+            "description": "Aktualizuj sprawy o tym samym znaku zamiast je pomijać",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_excel_api_knowledge_cases_import_excel_post"
+      },
+      "Body_import_rule_document_api_knowledge_rules_import_document_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "description": ".pdf / .docx / .txt z ustawą, zarządzeniem lub wzorem pisma"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source",
+            "description": "np. „Zarządzenie nr 123/2026 Prezydenta Miasta”"
+          },
+          "split_articles": {
+            "type": "boolean",
+            "title": "Split Articles",
+            "description": "Podziel dokument na artykuły i paragrafy (lepsze wyszukiwanie)",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_rule_document_api_knowledge_rules_import_document_post"
+      },
+      "CaseDetail": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ordinal"
+          },
+          "case_number": {
+            "type": "string",
+            "title": "Case Number"
+          },
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "applicant": {
+            "type": "string",
+            "title": "Applicant"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "received_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Date"
+          },
+          "deadline_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Date"
+          },
+          "response_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Date"
+          },
+          "date_parse_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Parse Warning"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaseStatus"
+          },
+          "procedure_mode": {
+            "$ref": "#/components/schemas/ProcedureMode",
+            "default": "zwykla"
+          },
+          "departments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Departments",
+            "default": []
+          },
+          "initials": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initials",
+            "description": "Osoba odpowiedzialna / inicjały (kolumna rejestru UMB)."
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "days_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Remaining",
+            "description": "Dni do terminu; 0 dla spraw zakończonych (jak w rejestrze UMB)."
+          },
+          "answered_on_time": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered On Time",
+            "description": "Dla spraw zakończonych: czy odpowiedź udzielona w terminie."
+          },
+          "deadline_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Note"
+          },
+          "original_deadline_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Deadline Date",
+            "description": "Termin 14-dniowy (przed przedłużeniem)."
+          },
+          "extension_days": {
+            "type": "integer",
+            "title": "Extension Days",
+            "description": "O ile dni przedłużono termin (kwerenda / doprecyzowanie).",
+            "default": 0
+          },
+          "max_deadline_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Deadline Date",
+            "description": "Najpóźniejszy dopuszczalny termin: 2 miesiące od wpływu (art. 13 ust. 2)."
+          },
+          "dept_total": {
+            "type": "integer",
+            "title": "Dept Total",
+            "default": 0
+          },
+          "dept_answered": {
+            "type": "integer",
+            "title": "Dept Answered",
+            "default": 0
+          },
+          "dept_waiting": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Dept Waiting",
+            "default": []
+          },
+          "dept_clarification": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Dept Clarification",
+            "default": []
+          },
+          "urgency": {
+            "$ref": "#/components/schemas/Urgency",
+            "description": "Podświetlenie: overdue (po terminie), today, tomorrow, soon (≤3 dni), normal, done."
+          },
+          "applicant_contact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicant Contact"
+          },
+          "request_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Text"
+          },
+          "parsed_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParsedRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "response_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Text"
+          },
+          "department_status": {
+            "items": {
+              "$ref": "#/components/schemas/DepartmentStatusOut"
+            },
+            "type": "array",
+            "title": "Department Status",
+            "default": []
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/CaseDocument"
+            },
+            "type": "array",
+            "title": "Documents",
+            "default": []
+          },
+          "department_replies": {
+            "items": {
+              "$ref": "#/components/schemas/DepartmentReplyOut"
+            },
+            "type": "array",
+            "title": "Department Replies",
+            "default": []
+          },
+          "drafts": {
+            "items": {
+              "$ref": "#/components/schemas/DraftOut"
+            },
+            "type": "array",
+            "title": "Drafts",
+            "default": []
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/CaseEvent"
+            },
+            "type": "array",
+            "title": "Events",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "case_number",
+          "year",
+          "applicant",
+          "subject",
+          "received_date",
+          "deadline_date",
+          "status",
+          "days_remaining",
+          "urgency"
+        ],
+        "title": "CaseDetail"
+      },
+      "CaseDocument": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DocumentKind"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "document_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Date"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "filename",
+          "text",
+          "document_date",
+          "created_at"
+        ],
+        "title": "CaseDocument"
+      },
+      "CaseEvent": {
+        "properties": {
+          "event": {
+            "type": "string",
+            "title": "Event"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event",
+          "detail",
+          "created_at"
+        ],
+        "title": "CaseEvent"
+      },
+      "CaseListItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "ordinal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ordinal"
+          },
+          "case_number": {
+            "type": "string",
+            "title": "Case Number"
+          },
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "applicant": {
+            "type": "string",
+            "title": "Applicant"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "received_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Date"
+          },
+          "deadline_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Date"
+          },
+          "response_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Date"
+          },
+          "date_parse_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date Parse Warning"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaseStatus"
+          },
+          "procedure_mode": {
+            "$ref": "#/components/schemas/ProcedureMode",
+            "default": "zwykla"
+          },
+          "departments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Departments",
+            "default": []
+          },
+          "initials": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initials",
+            "description": "Osoba odpowiedzialna / inicjały (kolumna rejestru UMB)."
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "days_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Remaining",
+            "description": "Dni do terminu; 0 dla spraw zakończonych (jak w rejestrze UMB)."
+          },
+          "answered_on_time": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered On Time",
+            "description": "Dla spraw zakończonych: czy odpowiedź udzielona w terminie."
+          },
+          "deadline_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Note"
+          },
+          "original_deadline_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Deadline Date",
+            "description": "Termin 14-dniowy (przed przedłużeniem)."
+          },
+          "extension_days": {
+            "type": "integer",
+            "title": "Extension Days",
+            "description": "O ile dni przedłużono termin (kwerenda / doprecyzowanie).",
+            "default": 0
+          },
+          "max_deadline_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Deadline Date",
+            "description": "Najpóźniejszy dopuszczalny termin: 2 miesiące od wpływu (art. 13 ust. 2)."
+          },
+          "dept_total": {
+            "type": "integer",
+            "title": "Dept Total",
+            "default": 0
+          },
+          "dept_answered": {
+            "type": "integer",
+            "title": "Dept Answered",
+            "default": 0
+          },
+          "dept_waiting": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Dept Waiting",
+            "default": []
+          },
+          "dept_clarification": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Dept Clarification",
+            "default": []
+          },
+          "urgency": {
+            "$ref": "#/components/schemas/Urgency",
+            "description": "Podświetlenie: overdue (po terminie), today, tomorrow, soon (≤3 dni), normal, done."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "case_number",
+          "year",
+          "applicant",
+          "subject",
+          "received_date",
+          "deadline_date",
+          "status",
+          "days_remaining",
+          "urgency"
+        ],
+        "title": "CaseListItem"
+      },
+      "CaseStatus": {
+        "type": "string",
+        "enum": [
+          "brak_dzialan",
+          "zapytania_wyslane",
+          "kwerenda",
+          "doprecyzowanie",
+          "odpowiedz_w_przygotowaniu",
+          "przygotowana_odpowiedz",
+          "odpowiedz_wyslana"
+        ],
+        "title": "CaseStatus"
+      },
+      "CategoryIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "legal_basis": {
+            "type": "string",
+            "title": "Legal Basis",
+            "default": ""
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          },
+          "mask": {
+            "type": "string",
+            "title": "Mask",
+            "default": "[ANONIMIZACJA]"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CategoryIn"
+      },
+      "CategoryOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "legal_basis": {
+            "type": "string",
+            "title": "Legal Basis",
+            "default": ""
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          },
+          "mask": {
+            "type": "string",
+            "title": "Mask",
+            "default": "[ANONIMIZACJA]"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id"
+        ],
+        "title": "CategoryOut"
+      },
+      "CategoryUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "legal_basis": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Basis"
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          },
+          "mask": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mask"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "title": "CategoryUpdate"
+      },
+      "ClarificationIn": {
+        "properties": {
+          "details": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details",
+            "description": "Czego brakuje w odpowiedzi wydziału."
+          }
+        },
+        "type": "object",
+        "title": "ClarificationIn"
+      },
+      "ClarificationOut": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Treść prośby do wydziału — do skopiowania i wysłania przez urzędnika."
+          },
+          "departments": {
+            "items": {
+              "$ref": "#/components/schemas/DepartmentStatusOut"
+            },
+            "type": "array",
+            "title": "Departments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "text",
+          "departments"
+        ],
+        "title": "ClarificationOut"
+      },
+      "DeadlineSuggestion": {
+        "properties": {
+          "received_date": {
+            "type": "string",
+            "title": "Received Date"
+          },
+          "deadline_date": {
+            "type": "string",
+            "title": "Deadline Date"
+          },
+          "max_extended_deadline": {
+            "type": "string",
+            "title": "Max Extended Deadline"
+          },
+          "days_remaining": {
+            "type": "integer",
+            "title": "Days Remaining"
+          },
+          "urgency": {
+            "$ref": "#/components/schemas/Urgency"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Ostrzeżenie, gdy termin wypada w dzień wolny."
+          }
+        },
+        "type": "object",
+        "required": [
+          "received_date",
+          "deadline_date",
+          "max_extended_deadline",
+          "days_remaining",
+          "urgency"
+        ],
+        "title": "DeadlineSuggestion"
+      },
+      "DepartmentAdd": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "DepartmentAdd"
+      },
+      "DepartmentIn": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "keywords": {
+            "type": "string",
+            "title": "Keywords",
+            "default": ""
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name"
+        ],
+        "title": "DepartmentIn"
+      },
+      "DepartmentOut": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "keywords": {
+            "type": "string",
+            "title": "Keywords",
+            "default": ""
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name"
+        ],
+        "title": "DepartmentOut"
+      },
+      "DepartmentReplyOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "department",
+          "filename",
+          "text",
+          "created_at"
+        ],
+        "title": "DepartmentReplyOut"
+      },
+      "DepartmentStatusOut": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeptStatus"
+          },
+          "status_label": {
+            "type": "string",
+            "title": "Status Label"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "answered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "clarification_count": {
+            "type": "integer",
+            "title": "Clarification Count"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "status",
+          "status_label",
+          "requested_at",
+          "answered_at",
+          "clarification_count",
+          "note"
+        ],
+        "title": "DepartmentStatusOut"
+      },
+      "DepartmentStatusUpdate": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/DeptStatus"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "DepartmentStatusUpdate"
+      },
+      "DepartmentSuggestion": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "reason"
+        ],
+        "title": "DepartmentSuggestion"
+      },
+      "DepartmentUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "title": "DepartmentUpdate"
+      },
+      "DeptStatus": {
+        "type": "string",
+        "enum": [
+          "oczekuje",
+          "odpowiedzial",
+          "uszczegolowienie"
+        ],
+        "title": "DeptStatus"
+      },
+      "DocumentKind": {
+        "type": "string",
+        "enum": [
+          "wniosek",
+          "odpowiedz",
+          "nie_dysponent",
+          "kwerenda",
+          "doprecyzowanie"
+        ],
+        "title": "DocumentKind"
+      },
+      "DraftOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LetterKind"
+          },
+          "draft_text": {
+            "type": "string",
+            "title": "Draft Text"
+          },
+          "anonymization_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/AnonymizationCandidate"
+            },
+            "type": "array",
+            "title": "Anonymization Candidates"
+          },
+          "final_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Text"
+          },
+          "generated_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated Format"
+          },
+          "llm_used": {
+            "type": "boolean",
+            "title": "Llm Used"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "draft_text",
+          "anonymization_candidates",
+          "final_text",
+          "generated_format",
+          "llm_used",
+          "created_at"
+        ],
+        "title": "DraftOut"
+      },
+      "DraftResult": {
+        "properties": {
+          "case_id": {
+            "type": "integer",
+            "title": "Case Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaseStatus"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/LetterKind"
+          },
+          "deadline_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Date"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          },
+          "draft_id": {
+            "type": "integer",
+            "title": "Draft Id"
+          },
+          "draft_text": {
+            "type": "string",
+            "title": "Draft Text"
+          },
+          "llm_used": {
+            "type": "boolean",
+            "title": "Llm Used"
+          },
+          "anonymization_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/AnonymizationCandidate"
+            },
+            "type": "array",
+            "title": "Anonymization Candidates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "case_id",
+          "status",
+          "kind",
+          "draft_id",
+          "draft_text",
+          "llm_used",
+          "anonymization_candidates"
+        ],
+        "title": "DraftResult"
+      },
+      "ExternalEntityIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "name_genitive": {
+            "type": "string",
+            "title": "Name Genitive",
+            "description": "Nazwa w dopełniaczu, np. „Zarządu Dróg Miejskich…” (do formuły „winien się zwrócić do …”)."
+          },
+          "contact": {
+            "type": "string",
+            "title": "Contact",
+            "default": ""
+          },
+          "keywords": {
+            "type": "string",
+            "title": "Keywords",
+            "default": ""
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "name_genitive"
+        ],
+        "title": "ExternalEntityIn"
+      },
+      "ExternalEntityOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "name_genitive": {
+            "type": "string",
+            "title": "Name Genitive",
+            "description": "Nazwa w dopełniaczu, np. „Zarządu Dróg Miejskich…” (do formuły „winien się zwrócić do …”)."
+          },
+          "contact": {
+            "type": "string",
+            "title": "Contact",
+            "default": ""
+          },
+          "keywords": {
+            "type": "string",
+            "title": "Keywords",
+            "default": ""
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "name_genitive",
+          "id"
+        ],
+        "title": "ExternalEntityOut"
+      },
+      "ExternalEntitySuggestion": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "reason"
+        ],
+        "title": "ExternalEntitySuggestion"
+      },
+      "ExternalEntityUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "name_genitive": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Genitive"
+          },
+          "contact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact"
+          },
+          "keywords": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keywords"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "title": "ExternalEntityUpdate"
+      },
+      "ExtractionInfo": {
+        "properties": {
+          "has_text_layer": {
+            "type": "boolean",
+            "title": "Has Text Layer"
+          },
+          "used_ocr": {
+            "type": "boolean",
+            "title": "Used Ocr"
+          },
+          "text_length": {
+            "type": "integer",
+            "title": "Text Length"
+          },
+          "quality": {
+            "type": "number",
+            "title": "Quality",
+            "description": "Jakość odczytu 0–1 (udział rozpoznanych słów)."
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning",
+            "description": "Np. pismo odręczne nieczytelne dla OCR — wpisz treść ręcznie."
+          },
+          "manual_text_used": {
+            "type": "boolean",
+            "title": "Manual Text Used",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "has_text_layer",
+          "used_ocr",
+          "text_length",
+          "quality"
+        ],
+        "title": "ExtractionInfo"
+      },
+      "GenerateRequest": {
+        "properties": {
+          "draft_id": {
+            "type": "integer",
+            "title": "Draft Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "docx",
+              "pdf",
+              "txt"
+            ],
+            "title": "Format",
+            "default": "docx"
+          },
+          "anonymization_items": {
+            "items": {
+              "$ref": "#/components/schemas/AnonymizationItem"
+            },
+            "type": "array",
+            "title": "Anonymization Items",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "draft_id",
+          "content"
+        ],
+        "title": "GenerateRequest"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Health": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "offline_mode": {
+            "type": "boolean",
+            "title": "Offline Mode"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "llm_enabled": {
+            "type": "boolean",
+            "title": "Llm Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "offline_mode",
+          "model",
+          "llm_enabled"
+        ],
+        "title": "Health"
+      },
+      "ImportResult": {
+        "properties": {
+          "imported": {
+            "type": "integer",
+            "title": "Imported"
+          },
+          "updated": {
+            "type": "integer",
+            "title": "Updated"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "imported",
+          "updated",
+          "skipped",
+          "warnings"
+        ],
+        "title": "ImportResult"
+      },
+      "IntakeResponse": {
+        "properties": {
+          "intake_id": {
+            "type": "integer",
+            "title": "Intake Id",
+            "description": "Przekaż do POST /api/cases/register, aby powiązać sprawę z treścią wniosku."
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "extraction": {
+            "$ref": "#/components/schemas/ExtractionInfo"
+          },
+          "llm_used": {
+            "type": "boolean",
+            "title": "Llm Used"
+          },
+          "parsed_request": {
+            "$ref": "#/components/schemas/ParsedRequest"
+          },
+          "similar_cases": {
+            "items": {
+              "$ref": "#/components/schemas/SimilarCase"
+            },
+            "type": "array",
+            "title": "Similar Cases"
+          },
+          "suggested_departments": {
+            "items": {
+              "$ref": "#/components/schemas/DepartmentSuggestion"
+            },
+            "type": "array",
+            "title": "Suggested Departments"
+          },
+          "suggested_external_entities": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalEntitySuggestion"
+            },
+            "type": "array",
+            "title": "Suggested External Entities",
+            "description": "Podmioty spoza UMB, które mogą być dysponentem informacji (pismo „nie_dysponent”)."
+          },
+          "suggested_deadline": {
+            "$ref": "#/components/schemas/DeadlineSuggestion"
+          },
+          "text_preview": {
+            "type": "string",
+            "title": "Text Preview",
+            "description": "Początek wyodrębnionego tekstu (do weryfikacji odczytu)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "intake_id",
+          "filename",
+          "extraction",
+          "llm_used",
+          "parsed_request",
+          "similar_cases",
+          "suggested_departments",
+          "suggested_external_entities",
+          "suggested_deadline",
+          "text_preview"
+        ],
+        "title": "IntakeResponse"
+      },
+      "LetterKind": {
+        "type": "string",
+        "enum": [
+          "odpowiedz",
+          "nie_dysponent",
+          "kwerenda",
+          "doprecyzowanie"
+        ],
+        "title": "LetterKind"
+      },
+      "LetterRequest": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/LetterKind"
+          },
+          "new_deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Deadline",
+            "description": "Kwerenda/doprecyzowanie: nowy termin (domyślnie wyliczany, maks. 2 miesiące)."
+          },
+          "external_entity_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Entity Id",
+            "description": "nie_dysponent: podmiot właściwy (GET /api/knowledge/external-entities)."
+          },
+          "department": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Department",
+            "description": "Symbol komórki, np. WAB (doprecyzowanie)."
+          },
+          "details": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details",
+            "description": "Doprecyzowanie: czego ma dotyczyć."
+          },
+          "apply_status": {
+            "type": "boolean",
+            "title": "Apply Status",
+            "description": "Ustaw status sprawy (kwerenda/doprecyzowanie) i nowy termin.",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "LetterRequest"
+      },
+      "ManualCase": {
+        "properties": {
+          "case_number": {
+            "type": "string",
+            "title": "Case Number"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "applicant": {
+            "type": "string",
+            "title": "Applicant",
+            "default": ""
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "received_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Date"
+          },
+          "response_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Date"
+          },
+          "procedure_mode": {
+            "$ref": "#/components/schemas/ProcedureMode",
+            "default": "zwykla"
+          },
+          "departments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Departments",
+            "default": []
+          },
+          "request_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Text"
+          },
+          "response_text": {
+            "type": "string",
+            "title": "Response Text",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "case_number",
+          "subject"
+        ],
+        "title": "ManualCase"
+      },
+      "ManualCaseOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "case_number": {
+            "type": "string",
+            "title": "Case Number"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "case_number"
+        ],
+        "title": "ManualCaseOut"
+      },
+      "ParsedRequest": {
+        "properties": {
+          "wnioskodawca": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wnioskodawca"
+          },
+          "typ_wnioskodawcy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Typ Wnioskodawcy"
+          },
+          "adres_do_odpowiedzi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adres Do Odpowiedzi"
+          },
+          "forma_odpowiedzi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forma Odpowiedzi"
+          },
+          "data_na_pismie": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Na Pismie"
+          },
+          "temat_skrot": {
+            "type": "string",
+            "title": "Temat Skrot",
+            "default": ""
+          },
+          "pytania": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pytania",
+            "default": []
+          },
+          "kategoria": {
+            "type": "string",
+            "title": "Kategoria",
+            "default": "inne"
+          },
+          "czy_to_wniosek_udip": {
+            "type": "boolean",
+            "title": "Czy To Wniosek Udip",
+            "default": true
+          },
+          "uwagi": {
+            "type": "string",
+            "title": "Uwagi",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "ParsedRequest"
+      },
+      "ProcedureMode": {
+        "type": "string",
+        "enum": [
+          "zwykla",
+          "bip",
+          "przetworzona",
+          "odmowa",
+          "nie_dysponent"
+        ],
+        "title": "ProcedureMode"
+      },
+      "RegisterCase": {
+        "properties": {
+          "case_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Number",
+            "description": "Znak sprawy; puste = nadany automatycznie (CASE_NUMBER_PREFIX.n.rok)."
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "applicant": {
+            "type": "string",
+            "title": "Applicant"
+          },
+          "applicant_contact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicant Contact"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "received_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Received Date"
+          },
+          "deadline_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Date",
+            "description": "Puste = 14 dni od daty wpływu."
+          },
+          "departments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Departments",
+            "default": []
+          },
+          "initials": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initials"
+          },
+          "procedure_mode": {
+            "$ref": "#/components/schemas/ProcedureMode",
+            "default": "zwykla"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "intake_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intake Id"
+          },
+          "parsed_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParsedRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "generate_dept_request_template": {
+            "type": "boolean",
+            "title": "Generate Dept Request Template",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "applicant",
+          "subject",
+          "received_date"
+        ],
+        "title": "RegisterCase"
+      },
+      "RegisterResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "case_number": {
+            "type": "string",
+            "title": "Case Number"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaseStatus"
+          },
+          "deadline_date": {
+            "type": "string",
+            "title": "Deadline Date"
+          },
+          "departments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Departments"
+          },
+          "request_templates": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Request Templates",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "case_number",
+          "status",
+          "deadline_date",
+          "departments"
+        ],
+        "title": "RegisterResponse"
+      },
+      "RuleIn": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": ""
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "content"
+        ],
+        "title": "RuleIn"
+      },
+      "RuleOut": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": ""
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "content",
+          "id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RuleOut"
+      },
+      "RuleUpdate": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "title": "RuleUpdate"
+      },
+      "SendRequest": {
+        "properties": {
+          "case_id": {
+            "type": "integer",
+            "title": "Case Id"
+          },
+          "draft_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Id"
+          },
+          "final_content": {
+            "type": "string",
+            "title": "Final Content",
+            "description": "Treść wysłanego pisma; zaznaczone fragmenty maskuje serwer."
+          },
+          "anonymization_items": {
+            "items": {
+              "$ref": "#/components/schemas/AnonymizationItem"
+            },
+            "type": "array",
+            "title": "Anonymization Items",
+            "default": []
+          },
+          "response_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "case_id",
+          "final_content"
+        ],
+        "title": "SendRequest"
+      },
+      "SendResponse": {
+        "properties": {
+          "case_id": {
+            "type": "integer",
+            "title": "Case Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaseStatus"
+          },
+          "response_date": {
+            "type": "string",
+            "title": "Response Date"
+          }
+        },
+        "type": "object",
+        "required": [
+          "case_id",
+          "status",
+          "response_date"
+        ],
+        "title": "SendResponse"
+      },
+      "SimilarCase": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "case_number": {
+            "type": "string",
+            "title": "Case Number"
+          },
+          "received_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Date"
+          },
+          "response_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Date"
+          },
+          "applicant": {
+            "type": "string",
+            "title": "Applicant"
+          },
+          "subject": {
+            "type": "string",
+            "title": "Subject"
+          },
+          "procedure_mode": {
+            "$ref": "#/components/schemas/ProcedureMode"
+          },
+          "departments": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Departments"
+          },
+          "response_text": {
+            "type": "string",
+            "title": "Response Text"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score",
+            "description": "Trafność (BM25) — im wyżej, tym bardziej podobna sprawa."
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "case_number",
+          "received_date",
+          "response_date",
+          "applicant",
+          "subject",
+          "procedure_mode",
+          "departments",
+          "response_text"
+        ],
+        "title": "SimilarCase"
+      },
+      "StatusResponse": {
+        "properties": {
+          "case_id": {
+            "type": "integer",
+            "title": "Case Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CaseStatus"
+          },
+          "deadline_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Date"
+          },
+          "days_remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Remaining"
+          }
+        },
+        "type": "object",
+        "required": [
+          "case_id",
+          "status"
+        ],
+        "title": "StatusResponse"
+      },
+      "StatusUpdate": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/CaseStatus"
+          },
+          "deadline_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Date",
+            "description": "Opcjonalnie nowy termin, np. przy kwerendzie/przedłużeniu (maks. 2 miesiące od wpływu)."
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "StatusUpdate"
+      },
+      "UpdateCase": {
+        "properties": {
+          "case_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Number"
+          },
+          "applicant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicant"
+          },
+          "applicant_contact": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicant Contact"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "received_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Date"
+          },
+          "deadline_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline Date"
+          },
+          "response_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Date"
+          },
+          "departments": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Departments"
+          },
+          "initials": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initials"
+          },
+          "procedure_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcedureMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "title": "UpdateCase"
+      },
+      "Urgency": {
+        "type": "string",
+        "enum": [
+          "overdue",
+          "today",
+          "tomorrow",
+          "soon",
+          "normal",
+          "done"
+        ],
+        "title": "Urgency"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "0. System",
+      "description": "Stan backendu, ustawienia dla interfejsu, terminy i dni wolne."
+    },
+    {
+      "name": "1. Przyjęcie wniosku",
+      "description": "Odczyt i analiza wniosku przed rejestracją."
+    },
+    {
+      "name": "2. Rejestr wniosków",
+      "description": "Sprawy, statusy, wydziały i pisma w toku sprawy."
+    },
+    {
+      "name": "3. Odpowiedź i anonimizacja",
+      "description": "Pliki pism z anonimizacją i odnotowanie wysyłki."
+    },
+    {
+      "name": "4. Baza wiedzy",
+      "description": "Przepisy, kategorie anonimizacji, wydziały, podmioty zewnętrzne i archiwum."
+    }
+  ]
+}

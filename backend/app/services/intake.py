@@ -14,7 +14,7 @@ UNREADABLE_NOTE = " Dokument nieczytelny dla OCR — wpisz treść (manual_text)
 def analyze(conn: sqlite3.Connection, filename: str, extracted: Extraction, received: date) -> dict:
     """Niczego nie rejestruje — sprawa powstaje dopiero po zatwierdzeniu danych przez urzędnika."""
     active_departments = departments.list_active(conn)
-    parsed, llm_departments, llm_used = analysis.parse_request(extracted.text, active_departments)
+    parsed, llm_departments = analysis.parse_request(extracted.text, active_departments)
 
     # Przy nieczytelnym skanie nie szukamy po błędach OCR — wyniki byłyby przypadkowe.
     similar, suggested, external = [], [], []
@@ -34,7 +34,7 @@ def analyze(conn: sqlite3.Connection, filename: str, extracted: Extraction, rece
         "intake_id": cursor.lastrowid,
         "filename": filename,
         "extraction": extracted.meta,
-        "llm_used": llm_used,
+        "llm_used": True,
         "parsed_request": parsed,
         "similar_cases": similar,
         "suggested_departments": suggested,

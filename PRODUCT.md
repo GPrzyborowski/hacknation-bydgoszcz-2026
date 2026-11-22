@@ -14,7 +14,7 @@ No other audiences are confirmed. Department staff and citizens do not use the t
 
 ## Product Purpose
 
-Asystent UDIP takes the routine work out of handling a public-information request while leaving every decision with the official. The flow, as the product describes it:
+UDIPilot takes the routine work out of handling a public-information request while leaving every decision with the official. The flow, as the product describes it:
 
 1. **Wgraj wniosek:** the official uploads the request (PDF, DOC, DOCX).
 2. **Analiza i podobne sprawy:** the assistant reads the request, finds similar requests in the archive and suggests which departments should handle it.
@@ -47,7 +47,7 @@ An assistant built around the actual legal procedure for public-information requ
 
 ## Brand Commitments
 
-- Product name: **Asystent UDIP**. Owning organisation as shown in the UI: Urząd Miasta Bydgoszczy.
+- Product name: **UDIPilot**. Owning organisation as shown in the UI: Urząd Miasta Bydgoszczy.
 - Voice: plain, procedural Polish in the register of public administration, always stating that the official decides. Existing copy example: "Ostateczną decyzję zawsze podejmuje urzędnik."
 - No official city logo or brand assets are in the repository. Do not invent or imitate one.
 - **Standing visual commitment (chosen 2026-11-21):** every screen follows the standard Polish e-government look, played straight and at full craft. The quality bar is gov.pl and mObywatel. Follow their conventions: plain forms, strong inputs, clear steps, high-contrast focus. Do not copy their logos, emblem or branding.

@@ -13,7 +13,7 @@ from services import deadlines, extraction, intake
 router = APIRouter(prefix="/api/intake", tags=["1. Przyjęcie wniosku"])
 
 
-@router.post("/analyze", response_model=IntakeResponse, responses={**UPLOAD_ERRORS, **LLM_ERRORS})
+@router.post("/analyze", summary="Analiza wniosku (OCR + Gemini)", response_model=IntakeResponse, responses={**UPLOAD_ERRORS, **LLM_ERRORS})
 def analyze(
     file: UploadFile = File(description="Wniosek: .pdf, .docx, .doc lub skan .jpg/.png/.tiff"),
     received_at: date | None = Form(None, description="Data wpływu (RRRR-MM-DD) — od niej liczony jest termin."),

@@ -924,3 +924,37 @@ details > summary {
     padding: 18px;
   }
 }
+
+/* --- Przełącznik widoku kalendarium --- */
+.view-switch {
+  display: inline-flex;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.view-switch-option {
+  min-height: 40px;
+  padding: 6px 18px;
+  border: 0;
+  background: #fff;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-switch-option + .view-switch-option {
+  border-left: 2px solid var(--accent);
+}
+
+.view-switch-option:hover:not(.is-active) {
+  background: var(--accent-tint);
+}
+
+.view-switch-option.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.cal-table-empty {
+  margin-top: 16px;
+}

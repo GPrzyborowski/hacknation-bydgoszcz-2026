@@ -1,5 +1,5 @@
 import { ErrorNotice } from './components/Notice'
-import { getConfig, type AppConfig } from './lib/api'
+import { getConfig } from './lib/api'
 import { ConfigContext } from './lib/config'
 import { cx } from './lib/dom'
 import { useQuery } from './lib/hooks'
@@ -34,10 +34,10 @@ export default function App() {
       <header className="topbar">
         <div className="container container-wide topbar-inner">
           <div className="brand">
-            <span className="brand-name">Asystent UDIP</span>
+            <span className="brand-name">UDIPilot</span>
             <span className="brand-org">Urząd Miasta Bydgoszczy</span>
           </div>
-          {config.data && <ModelBadge config={config.data} />}
+          {config.data && !config.data.llm_enabled && <MissingKeyBadge />}
         </div>
         <nav className="tabs" aria-label="Sekcje">
           <div className="container container-wide tabs-inner">
@@ -83,17 +83,11 @@ export default function App() {
   )
 }
 
-function ModelBadge({ config }: { config: AppConfig }) {
+/** Widoczne tylko przy braku klucza — bez niego analiza wniosków i projekty pism nie działają. */
+function MissingKeyBadge() {
   return (
-    <span
-      className="model-badge"
-      title={
-        config.llm_enabled
-          ? 'Treść wniosków analizuje model Google Gemini — używaj danych testowych.'
-          : 'Brak klucza Gemini — analiza regułowa.'
-      }
-    >
-      {config.llm_enabled ? `Model: ${config.model}` : 'Bez modelu (analiza regułowa)'}
+    <span className="model-badge is-missing" title="Wpisz GEMINI_API_KEY w pliku .env i uruchom ponownie backend.">
+      Brak klucza Gemini
     </span>
   )
 }

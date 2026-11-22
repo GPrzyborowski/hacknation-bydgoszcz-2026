@@ -7,7 +7,7 @@ import time
 import httpx
 
 import config
-from errors import BadGateway, Forbidden
+from errors import BadGateway, Forbidden, ServiceUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -19,8 +19,11 @@ ERROR_BODY_EXCERPT = 300
 _client: httpx.Client | None = None
 
 
-class LLMDisabled(Exception):
-    """Brak klucza API — wywołujący przechodzi na analizę regułową."""
+class LLMNotConfigured(ServiceUnavailable):
+    """Brak klucza GEMINI_API_KEY."""
+
+    def __init__(self):
+        super().__init__("Brak klucza Gemini: wpisz GEMINI_API_KEY w pliku .env i uruchom ponownie backend.")
 
 
 class LLMForbidden(Forbidden):
@@ -36,7 +39,7 @@ def enabled() -> bool:
 
 
 def model_name() -> str:
-    return config.LLM_MODEL if enabled() else "heurystyka (brak klucza Gemini)"
+    return config.LLM_MODEL
 
 
 def close() -> None:
@@ -56,7 +59,7 @@ def _http() -> httpx.Client:
 def chat_json(system: str, user: str, max_tokens: int | None = None) -> dict:
     """Wysyła prompt i zwraca obiekt JSON z odpowiedzi modelu."""
     if not enabled():
-        raise LLMDisabled()
+        raise LLMNotConfigured()
     if config.OFFLINE_MODE:
         raise LLMForbidden("OFFLINE_MODE=true: wysyłka treści do Gemini jest zablokowana. Dane nie zostały wysłane.")
 

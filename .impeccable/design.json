@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-11-21T12:00:00Z",
-  "title": "Design System: Asystent UDIP",
+  "title": "Design System: UDIPilot",
   "extensions": {
     "colorMeta": {
       "bg": { "role": "neutral", "displayName": "Paper White", "canonical": "#ffffff", "tonalRamp": ["#1b1b1b", "#33373a", "#4b5257", "#7a8086", "#b8bdc2", "#dde0e3", "#f2f2f2", "#ffffff"] },
@@ -133,7 +133,7 @@
       "name": "Header Bar",
       "kind": "nav",
       "description": "White header with product and organisation name, closed by a 4px institutional blue rule; no logo.",
-      "html": "<header class=\"ds-topbar\"><div class=\"ds-brand\"><span class=\"ds-brand-name\">Asystent UDIP</span><span class=\"ds-brand-org\">Urząd Miasta Bydgoszczy</span></div></header>",
+      "html": "<header class=\"ds-topbar\"><div class=\"ds-brand\"><span class=\"ds-brand-name\">UDIPilot</span><span class=\"ds-brand-org\">Urząd Miasta Bydgoszczy</span></div></header>",
       "css": ".ds-topbar { display: flex; align-items: center; min-height: 72px; padding: 14px 32px; background: #fff; border-bottom: 4px solid #0052a5; font: 16px/1.5 'Segoe UI', system-ui, sans-serif; color: #1b1b1b; } .ds-brand { display: flex; flex-direction: column; } .ds-brand-name { font-size: 21px; font-weight: 700; line-height: 1.2; } .ds-brand-org { font-size: 15px; color: #4b5257; }"
     }
   ],

@@ -11,7 +11,8 @@ UPLOAD_ERRORS = {
 }
 LLM_ERRORS = {
     403: {"description": "OFFLINE_MODE=true — treść nie może zostać wysłana do Gemini."},
-    502: {"description": "Gemini nie odpowiedział poprawnie, a zapas regułowy jest wyłączony."},
+    502: {"description": "Gemini nie odpowiedział poprawnie (także po ponowieniach przy limicie zapytań)."},
+    503: {"description": "Brak klucza GEMINI_API_KEY."},
 }
 
 
