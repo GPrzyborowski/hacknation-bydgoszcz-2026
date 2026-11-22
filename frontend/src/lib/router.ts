@@ -1,50 +1,45 @@
 import { useEffect, useState } from 'react'
 
-export type Route =
-  | { name: 'intake' }
-  | { name: 'register' }
-  | { name: 'calendar' }
-  | { name: 'case'; id: number }
-  | { name: 'knowledge' }
+const PATHS = {
+  intake: '',
+  register: 'rejestr',
+  calendar: 'kalendarium',
+  knowledge: 'baza-wiedzy',
+} as const
 
-export function parseHash(hash: string): Route {
+type PageName = keyof typeof PATHS
+
+export type Route = { name: PageName } | { name: 'case'; id: number }
+
+const CASE_PATH = /^sprawa\/(\d+)$/
+
+function parseHash(hash: string): Route {
   const path = hash.replace(/^#\/?/, '')
-  const caseMatch = /^sprawa\/(\d+)$/.exec(path)
+  const caseMatch = CASE_PATH.exec(path)
   if (caseMatch) return { name: 'case', id: Number(caseMatch[1]) }
-  if (path === 'rejestr') return { name: 'register' }
-  if (path === 'kalendarium') return { name: 'calendar' }
-  if (path === 'baza-wiedzy') return { name: 'knowledge' }
-  return { name: 'intake' }
+  const page = (Object.keys(PATHS) as PageName[]).find((name) => PATHS[name] === path)
+  return { name: page ?? 'intake' }
 }
 
 export function hrefFor(route: Route): string {
-  switch (route.name) {
-    case 'register':
-      return '#/rejestr'
-    case 'calendar':
-      return '#/kalendarium'
-    case 'case':
-      return `#/sprawa/${route.id}`
-    case 'knowledge':
-      return '#/baza-wiedzy'
-    default:
-      return '#/'
-  }
+  return route.name === 'case' ? `#/sprawa/${route.id}` : `#/${PATHS[route.name]}`
 }
+
+export const caseHref = (id: number) => hrefFor({ name: 'case', id })
 
 export function navigate(route: Route) {
   window.location.hash = hrefFor(route)
 }
 
 export function useRoute(): Route {
-  const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash))
+  const [route, setRoute] = useState(() => parseHash(window.location.hash))
   useEffect(() => {
-    const onChange = () => {
+    const onHashChange = () => {
       setRoute(parseHash(window.location.hash))
       window.scrollTo(0, 0)
     }
-    window.addEventListener('hashchange', onChange)
-    return () => window.removeEventListener('hashchange', onChange)
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
   }, [])
   return route
 }

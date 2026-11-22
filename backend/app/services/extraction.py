@@ -1,35 +1,51 @@
-"""Wyciąganie tekstu z plików: DOCX, PDF (warstwa tekstowa lub OCR), DOC, obrazy, TXT."""
+"""Tekst z plików wniosków i materiałów: DOCX, PDF (warstwa tekstowa albo OCR), DOC, skany, TXT."""
 import io
+import logging
 import re
 import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from functools import cache, cached_property
 from pathlib import Path
 
+import docx
+import pypdfium2 as pdfium
+import pytesseract
+from PIL import Image, ImageSequence
+
 import config
+from errors import BadRequest, Unprocessable
+from services.patterns import PL_LETTER
 
-DOCX_EXT = {".docx"}
-PDF_EXT = {".pdf"}
-DOC_EXT = {".doc"}
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
-TEXT_EXT = {".txt", ".md"}
+log = logging.getLogger(__name__)
 
-REQUEST_EXTENSIONS = DOCX_EXT | PDF_EXT | DOC_EXT | IMAGE_EXT
-KNOWLEDGE_EXTENSIONS = REQUEST_EXTENSIONS | TEXT_EXT
+REQUEST_EXTENSIONS = (".pdf", ".docx", ".doc", ".jpg", ".jpeg", ".png", ".tif", ".tiff")
+KNOWLEDGE_EXTENSIONS = (*REQUEST_EXTENSIONS, ".txt", ".md")
+SPREADSHEET_EXTENSIONS = (".xlsx", ".xlsm")
+_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".tif", ".tiff"})
 
-# Strona PDF uznawana za "mającą tekst", gdy ma choć tyle znaków.
+# Strona PDF z mniejszą liczbą znaków to skan bez warstwy tekstowej.
 MIN_CHARS_PER_PAGE = 25
-# Docelowa szerokość obrazu strony pod OCR (A4 w 300 dpi).
-OCR_TARGET_WIDTH_PX = 2480
+# Odsetek tokenów wyglądających jak słowa, poniżej którego wynik OCR uznajemy za nieczytelny.
+LOW_QUALITY_THRESHOLD = 0.5
+
+OCR_DPI = 300
+A4_WIDTH_PT = 595
+OCR_TARGET_WIDTH_PX = 2480  # szerokość A4 w 300 dpi
+OVERSIZED_IMAGE_RATIO = 1.3
+DOC_CONVERSION_TIMEOUT_SECONDS = 60
+
+_WORD = re.compile(rf"^[(\"„]?[{PL_LETTER}]{{2,}}[)\".,:;?!”]*$|^[\d.,:/\-]+$")
+_VOWELS = frozenset("aeiouyąęóAEIOUYĄĘÓ")
 
 
-class ExtractionError(Exception):
-    """Plik nie nadaje się do odczytu (pusty, zły format) → 400."""
+class ExtractionError(BadRequest):
+    """Pusty plik, nieobsługiwany format albo uszkodzony dokument."""
 
 
-class OcrUnavailable(Exception):
-    """Brak warstwy tekstowej i brak możliwości OCR → 422."""
+class OcrUnavailable(Unprocessable):
+    """Dokument bez warstwy tekstowej, którego nie da się odczytać przez OCR."""
 
 
 @dataclass
@@ -37,8 +53,9 @@ class Extraction:
     text: str
     has_text_layer: bool
     used_ocr: bool
+    manual: bool = False
 
-    @property
+    @cached_property
     def quality(self) -> float:
         return text_quality(self.text)
 
@@ -52,6 +69,10 @@ class Extraction:
         return None
 
     @property
+    def readable(self) -> bool:
+        return self.manual or self.quality >= LOW_QUALITY_THRESHOLD
+
+    @property
     def meta(self) -> dict:
         return {
             "has_text_layer": self.has_text_layer,
@@ -59,29 +80,24 @@ class Extraction:
             "text_length": len(self.text),
             "quality": round(self.quality, 2),
             "warning": self.warning,
+            "manual_text_used": self.manual,
         }
 
 
-# Odsetek "sensownych" słów, poniżej którego wynik OCR uznajemy za nieczytelny.
-LOW_QUALITY_THRESHOLD = 0.5
-_WORD = re.compile(r"^[\(\"„]?[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]{2,}[\)\".,:;?!”]*$|^[\d.,:/\-]+$")
-_VOWELS = set("aeiouyąęóAEIOUYĄĘÓ")
-
-
 def text_quality(text: str) -> float:
-    """Heurystyczna jakość tekstu: udział tokenów wyglądających jak słowa (z samogłoską, nie WIELKIE ŚMIECI)."""
+    """Udział tokenów wyglądających jak słowa: z samogłoską i bez ciągów wielkich liter typu „BEREEERZEE”."""
     tokens = text.split()
     if not tokens:
         return 0.0
     good = 0
-    for t in tokens:
-        if not _WORD.match(t):
+    for token in tokens:
+        if not _WORD.match(token):
             continue
-        letters = [c for c in t if c.isalpha()]
-        if letters and not any(c in _VOWELS for c in letters):
+        letters = [char for char in token if char.isalpha()]
+        if letters and not any(char in _VOWELS for char in letters):
             continue
-        if len(letters) > 4 and all(c.isupper() for c in letters) and len(set(letters)) < len(letters) / 2:
-            continue  # "BEREEEERZEEZE" itp.
+        if len(letters) > 4 and all(char.isupper() for char in letters) and len(set(letters)) < len(letters) / 2:
+            continue
         good += 1
     return good / len(tokens)
 
@@ -90,43 +106,48 @@ def extension(filename: str) -> str:
     return Path(filename or "").suffix.lower()
 
 
-def extract(filename: str, data: bytes, allowed: set[str] = REQUEST_EXTENSIONS) -> Extraction:
+def manual_text(text: str) -> Extraction:
+    """Treść wpisana przez urzędnika, gdy skanu nie da się odczytać (np. pismo odręczne)."""
+    return Extraction(text.strip(), has_text_layer=False, used_ocr=False, manual=True)
+
+
+def extract(filename: str, data: bytes, allowed: tuple[str, ...] = REQUEST_EXTENSIONS) -> Extraction:
     if not data:
         raise ExtractionError("Plik jest pusty.")
     ext = extension(filename)
     if ext not in allowed:
         raise ExtractionError(f"Nieobsługiwany format pliku „{ext or filename}”. Dozwolone: {', '.join(sorted(allowed))}.")
 
-    if ext in DOCX_EXT:
-        result = Extraction(_docx_text(data), True, False)
-    elif ext in PDF_EXT:
-        result = _pdf_text(data)
-    elif ext in DOC_EXT:
-        result = Extraction(_doc_text(data), True, False)
-    elif ext in IMAGE_EXT:
-        result = Extraction(_ocr_image_bytes(data), False, True)
+    if ext == ".pdf":
+        text, has_text_layer, used_ocr = _pdf_text(data)
+    elif ext in _IMAGE_EXTENSIONS:
+        text, has_text_layer, used_ocr = _image_text(data), False, True
+    elif ext == ".docx":
+        text, has_text_layer, used_ocr = _docx_text(data), True, False
+    elif ext == ".doc":
+        text, has_text_layer, used_ocr = _doc_text(data), True, False
     else:
-        result = Extraction(_decode_text(data), True, False)
+        text, has_text_layer, used_ocr = _decode(data), True, False
 
-    result.text = _normalize(result.text)
-    if not result.text.strip():
-        if result.used_ocr:
+    text = _normalize(text)
+    if not text:
+        if used_ocr:
             raise OcrUnavailable("OCR nie rozpoznał tekstu w dokumencie.")
         raise ExtractionError("Nie znaleziono tekstu w dokumencie.")
-    return result
+    return Extraction(text, has_text_layer, used_ocr)
 
 
 def _normalize(text: str) -> str:
-    # pdfium zwraca końce wierszy „\r\n” — bez scalenia każdy wiersz dostałby pustą linię.
+    """Pojedyncze spacje w wierszach i najwyżej jeden pusty wiersz z rzędu (pdfium zwraca końce wierszy „\\r\\n”)."""
     lines = [" ".join(line.split()) for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
-    out: list[str] = []
+    kept: list[str] = []
     for line in lines:
-        if line or (out and out[-1]):
-            out.append(line)
-    return "\n".join(out).strip()
+        if line or (kept and kept[-1]):
+            kept.append(line)
+    return "\n".join(kept).strip()
 
 
-def _decode_text(data: bytes) -> str:
+def _decode(data: bytes) -> str:
     for encoding in ("utf-8-sig", "cp1250", "iso-8859-2"):
         try:
             return data.decode(encoding)
@@ -137,21 +158,14 @@ def _decode_text(data: bytes) -> str:
 
 def _docx_text(data: bytes) -> str:
     try:
-        import docx  # python-docx
-    except ImportError as exc:  # pragma: no cover
-        raise ExtractionError("Brak biblioteki python-docx.") from exc
-    try:
         document = docx.Document(io.BytesIO(data))
     except Exception as exc:
         raise ExtractionError("Nie udało się otworzyć pliku DOCX (uszkodzony lub inny format).") from exc
-    parts = [p.text for p in document.paragraphs]
+    parts = [paragraph.text for paragraph in document.paragraphs]
     for table in document.tables:
         for row in table.rows:
-            cells = []
-            for cell in row.cells:
-                if cell.text not in cells:
-                    cells.append(cell.text)
-            parts.append(" | ".join(cells))
+            # Scalone komórki python-docx zwraca kilka razy — każdą treść bierzemy raz.
+            parts.append(" | ".join(dict.fromkeys(cell.text for cell in row.cells)))
     return "\n".join(parts)
 
 
@@ -161,112 +175,73 @@ def _doc_text(data: bytes) -> str:
         raise ExtractionError("Format .doc wymaga narzędzia antiword na serwerze — zapisz plik jako .docx lub .pdf.")
     with tempfile.NamedTemporaryFile(suffix=".doc", delete=False) as tmp:
         tmp.write(data)
-        path = tmp.name
+        path = Path(tmp.name)
     try:
-        proc = subprocess.run([antiword, "-w", "0", path], capture_output=True, timeout=60)
+        process = subprocess.run([antiword, "-w", "0", str(path)], capture_output=True, timeout=DOC_CONVERSION_TIMEOUT_SECONDS)
     finally:
-        Path(path).unlink(missing_ok=True)
-    if proc.returncode != 0:
+        path.unlink(missing_ok=True)
+    if process.returncode != 0:
         raise ExtractionError("Nie udało się odczytać pliku .doc.")
-    return _decode_text(proc.stdout)
+    return _decode(process.stdout)
 
 
-def _pdf_pages_text(data: bytes) -> list[str]:
-    """Tekst stron PDF. pdfium poprawnie skleja słowa w pismach UMB (pypdf rozbija je: „infor macji”);
-    pypdf zostaje jako zapas."""
+def _pdf_text(data: bytes) -> tuple[str, bool, bool]:
+    """Warstwa tekstowa z pdfium (poprawnie skleja słowa w pismach UMB); strony bez niej przez OCR."""
     try:
-        import pypdfium2 as pdfium
-
-        pdf = pdfium.PdfDocument(data)
-        try:
-            return [pdf[i].get_textpage().get_text_range() for i in range(len(pdf))]
-        finally:
-            pdf.close()
-    except ImportError:
-        pass
+        document = pdfium.PdfDocument(data)
     except Exception as exc:
         raise ExtractionError("Nie udało się otworzyć pliku PDF (uszkodzony lub zaszyfrowany).") from exc
     try:
-        from pypdf import PdfReader
-
-        reader = PdfReader(io.BytesIO(data))
-        if reader.is_encrypted:
-            reader.decrypt("")
-        return [(page.extract_text() or "") for page in reader.pages]
-    except Exception as exc:
-        raise ExtractionError("Nie udało się otworzyć pliku PDF (uszkodzony lub zaszyfrowany).") from exc
-
-
-def _pdf_text(data: bytes) -> Extraction:
-    pages = _pdf_pages_text(data)
-    text_pages = [len(p.strip()) >= MIN_CHARS_PER_PAGE for p in pages]
-    if pages and all(text_pages):
-        return Extraction("\n\n".join(pages), True, False)
-
-    # Brak warstwy tekstowej (całkowicie lub na części stron) → OCR tych stron.
-    has_any_text = any(text_pages)
-    missing = [i for i, ok in enumerate(text_pages) if not ok] or list(range(len(pages)))
-    ocr_pages = _ocr_pdf_pages(data, missing)
-    merged = [ocr_pages.get(i, pages[i]) if not text_pages[i] else pages[i] for i in range(len(pages))]
-    return Extraction("\n\n".join(merged), has_any_text, True)
+        pages = [document[index].get_textpage().get_text_range() for index in range(len(document))]
+        scanned = [index for index, text in enumerate(pages) if len(text.strip()) < MIN_CHARS_PER_PAGE]
+        for index in scanned:
+            pages[index] = _ocr(_render_for_ocr(document[index]))
+    finally:
+        document.close()
+    return "\n\n".join(pages), len(scanned) < len(pages), bool(scanned)
 
 
-def _tesseract():
-    try:
-        import pytesseract
-    except ImportError as exc:
-        raise OcrUnavailable("Dokument nie ma warstwy tekstowej, a OCR (pytesseract) nie jest zainstalowany.") from exc
-    if not shutil.which("tesseract"):
-        raise OcrUnavailable("Dokument nie ma warstwy tekstowej, a na serwerze brak programu tesseract (OCR).")
-    return pytesseract
+def _render_for_ocr(page) -> Image.Image:
+    # Skany bywają stronami o nietypowym rozmiarze (np. 1220×1752 pt). W 300 dpi dałyby obraz szerszy niż 5000 px,
+    # na którym Tesseract nie znajduje tekstu, dlatego normalizujemy szerokość do A4.
+    scale = min(OCR_DPI / 72, OCR_TARGET_WIDTH_PX / (page.get_width() or A4_WIDTH_PT))
+    return page.render(scale=scale, grayscale=True).to_pil()
 
 
-def _ocr_image(image) -> str:
-    pytesseract = _tesseract()
-    try:
-        return pytesseract.image_to_string(image, lang=config.OCR_LANG)
-    except pytesseract.TesseractError:
-        # Brak polskiego modelu → próba z angielskim, lepsze to niż nic.
-        return pytesseract.image_to_string(image)
-
-
-def _ocr_image_bytes(data: bytes) -> str:
-    _tesseract()
-    from PIL import Image, ImageSequence
-
+def _image_text(data: bytes) -> str:
+    _require_tesseract()
     try:
         image = Image.open(io.BytesIO(data))
     except Exception as exc:
         raise ExtractionError("Nie udało się otworzyć obrazu.") from exc
-    texts = []
-    for frame in ImageSequence.Iterator(image):
-        frame = frame.convert("RGB")
-        if frame.width > OCR_TARGET_WIDTH_PX * 1.3:
-            ratio = OCR_TARGET_WIDTH_PX / frame.width
-            frame = frame.resize((OCR_TARGET_WIDTH_PX, int(frame.height * ratio)))
-        texts.append(_ocr_image(frame))
-    return "\n\n".join(texts)
+    return "\n\n".join(_ocr(_fit_width(frame.convert("L"))) for frame in ImageSequence.Iterator(image))
 
 
-def _ocr_pdf_pages(data: bytes, indexes: list[int]) -> dict[int, str]:
-    _tesseract()
-    try:
-        import pypdfium2 as pdfium
-    except ImportError as exc:
-        raise OcrUnavailable("Brak biblioteki pypdfium2 do renderowania stron PDF pod OCR.") from exc
-    pdf = pdfium.PdfDocument(data)
-    result: dict[int, str] = {}
-    try:
-        for i in indexes:
-            if i >= len(pdf):
-                continue
-            page = pdf[i]
-            # Skany bywają zapisane jako strony o nietypowym rozmiarze (np. 1220×1752 pt) — wtedy 300 dpi
-            # daje obraz >5000 px, na którym Tesseract nie znajduje tekstu. Normalizujemy do szerokości A4 w 300 dpi.
-            width_pt = page.get_width() or 595
-            scale = min(300 / 72, OCR_TARGET_WIDTH_PX / width_pt)
-            image = page.render(scale=scale).to_pil()
-            result[i] = _ocr_image(image)
-    finally:
-        pdf.close()
-    return result
+def _fit_width(image: Image.Image) -> Image.Image:
+    if image.width <= OCR_TARGET_WIDTH_PX * OVERSIZED_IMAGE_RATIO:
+        return image
+    return image.resize((OCR_TARGET_WIDTH_PX, int(image.height * OCR_TARGET_WIDTH_PX / image.width)))
+
+
+def _ocr(image: Image.Image) -> str:
+    _require_tesseract()
+    return pytesseract.image_to_string(image, lang=_ocr_language())
+
+
+def _require_tesseract() -> None:
+    if not _tesseract_installed():
+        raise OcrUnavailable("Dokument nie ma warstwy tekstowej, a na serwerze brak programu tesseract (OCR).")
+
+
+@cache
+def _tesseract_installed() -> bool:
+    return shutil.which("tesseract") is not None
+
+
+@cache
+def _ocr_language() -> str | None:
+    """Polski model OCR; gdy go brak — domyślny model Tesseracta, lepszy niż żaden."""
+    if config.OCR_LANG in pytesseract.get_languages():
+        return config.OCR_LANG
+    log.warning("Brak modelu OCR „%s” — używam domyślnego języka Tesseracta.", config.OCR_LANG)
+    return None

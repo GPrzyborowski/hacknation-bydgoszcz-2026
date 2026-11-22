@@ -68,7 +68,9 @@ p {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -80,6 +82,11 @@ a {
 :focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* Nagłówki, na które aplikacja przenosi fokus po zmianie widoku (tabindex="-1"), nie dostają obramowania. */
+[tabindex='-1']:focus {
+  outline: none;
 }
 
 .visually-hidden {

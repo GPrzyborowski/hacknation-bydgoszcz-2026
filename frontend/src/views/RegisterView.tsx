@@ -1,110 +1,79 @@
-import { useEffect, useState } from 'react'
-import { ApiError, STATUS_LABELS, STATUS_SHORT, listCases, listYears, type CaseItem, type CaseStatus, type Urgency } from '../lib/api'
-import { formatIso } from '../lib/deadline'
-import { navigate } from '../lib/router'
+import { useState, type FormEvent } from 'react'
+import { ErrorNotice } from '../components/Notice'
+import { listCases, listYears, type CaseItem, type CaseStatus } from '../lib/api'
+import { useConfig } from '../lib/config'
+import { formatIso } from '../lib/dates'
+import { STATUS_LABELS, STATUS_SHORT, isClosed, isUrgent, remainingLabel, urgencyLabel } from '../lib/domain'
+import { useQuery } from '../lib/hooks'
+import { caseHref, hrefFor, navigate } from '../lib/router'
 
-const URGENCY_LABEL: Partial<Record<Urgency, string>> = {
-  overdue: 'po terminie',
-  today: 'termin dziś',
-  tomorrow: 'termin jutro',
-  soon: 'termin w ciągu 3 dni',
-}
+type StageFilter = '' | 'w_toku' | CaseStatus
 
-function remaining(c: CaseItem): string {
-  if (c.status === 'odpowiedz_wyslana') return c.answered_on_time === false ? 'po terminie' : '—'
-  if (c.days_remaining === null) return '—'
-  if (c.days_remaining < 0) return `${-c.days_remaining} po terminie`
-  if (c.days_remaining === 0) return 'dziś'
-  return String(c.days_remaining)
-}
+const matchesStage = (item: CaseItem, stage: StageFilter) =>
+  stage === '' || (stage === 'w_toku' ? !isClosed(item.status) : item.status === stage)
 
 export function RegisterView() {
+  const { soon_days, case_number_prefix } = useConfig()
   const currentYear = new Date().getFullYear()
-  const [years, setYears] = useState<number[]>([currentYear])
   const [year, setYear] = useState(currentYear)
   const [query, setQuery] = useState('')
   const [appliedQuery, setAppliedQuery] = useState('')
-  const [cases, setCases] = useState<CaseItem[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState<'' | 'w_toku' | CaseStatus>('')
+  const [stage, setStage] = useState<StageFilter>('')
+  const years = useQuery(listYears)
+  const cases = useQuery(() => listCases({ year, query: appliedQuery }), `${year}|${appliedQuery}`)
 
-  useEffect(() => {
-    let alive = true
-    listYears()
-      .then((ys) => {
-        if (!alive) return
-        const all = Array.from(new Set([currentYear, ...ys])).sort((a, b) => b - a)
-        setYears(all)
-      })
-      .catch(() => undefined)
-    return () => {
-      alive = false
-    }
-  }, [currentYear])
+  const yearOptions = [...new Set([currentYear, ...(years.data ?? [])])].sort((a, b) => b - a)
+  const all = cases.data
+  const open = all?.filter((item) => !isClosed(item.status)) ?? []
+  const urgentCount = open.filter((item) => isUrgent(item.urgency)).length
+  const shown = all?.filter((item) => matchesStage(item, stage)) ?? []
 
-  useEffect(() => {
-    let alive = true
-    listCases({ year, q: appliedQuery })
-      .then((data) => {
-        if (!alive) return
-        setCases(data)
-        setError(null)
-      })
-      .catch((err) => alive && setError(err instanceof ApiError ? err.message : 'Nie udało się pobrać rejestru.'))
-    return () => {
-      alive = false
-    }
-  }, [year, appliedQuery])
-
-  const open = cases?.filter((c) => c.status !== 'odpowiedz_wyslana') ?? []
-  const shown =
-    cases?.filter((c) =>
-      statusFilter === '' ? true : statusFilter === 'w_toku' ? c.status !== 'odpowiedz_wyslana' : c.status === statusFilter,
-    ) ?? null
-  const urgent = open.filter((c) => c.urgency === 'overdue' || c.urgency === 'today' || c.urgency === 'tomorrow')
+  const search = (event: FormEvent) => {
+    event.preventDefault()
+    setAppliedQuery(query)
+  }
 
   return (
     <>
       <section className="intro">
         <h1>Rejestr wniosków</h1>
         <p className="lead">
-          Wnioski od najstarszych. Podświetlone są sprawy z terminem dziś lub jutro oraz po terminie — te obsłuż w
-          pierwszej kolejności.
+          Wnioski od najstarszych. Podświetlone są sprawy z terminem dziś lub jutro oraz po terminie — te obsłuż w pierwszej
+          kolejności.
         </p>
       </section>
 
-      <form
-        className="filters"
-        onSubmit={(e) => {
-          e.preventDefault()
-          setAppliedQuery(query)
-        }}
-      >
+      <form className="filters" onSubmit={search}>
         <div className="field">
-          <label className="field-label small" htmlFor="year">
+          <label className="field-label small" htmlFor="register-year">
             Rok
           </label>
-          <select id="year" className="input select num" value={year} onChange={(e) => setYear(Number(e.target.value))}>
-            {years.map((y) => (
-              <option key={y} value={y}>
-                {y}
+          <select
+            id="register-year"
+            className="input select num"
+            value={year}
+            onChange={(event) => setYear(Number(event.target.value))}
+          >
+            {yearOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
               </option>
             ))}
           </select>
         </div>
         <div className="field grow">
-          <label className="field-label small" htmlFor="search">
+          <label className="field-label small" htmlFor="register-search">
             Szukaj w sprawach i odpowiedziach
           </label>
           <input
-            id="search"
+            id="register-search"
             className="input"
             type="search"
             value={query}
-            placeholder="np. uczniowie, Astoria, BKS.IV.1431.590"
-            onChange={(e) => {
-              setQuery(e.target.value)
-              if (!e.target.value) setAppliedQuery('')
+            placeholder={`np. uczniowie, Astoria, ${case_number_prefix}.590`}
+            onChange={(event) => {
+              setQuery(event.target.value)
+              if (!event.target.value) setAppliedQuery('')
             }}
           />
         </div>
@@ -112,14 +81,14 @@ export function RegisterView() {
           Szukaj
         </button>
         <div className="field">
-          <label className="field-label small" htmlFor="status-filter">
+          <label className="field-label small" htmlFor="register-stage">
             Etap
           </label>
           <select
-            id="status-filter"
+            id="register-stage"
             className="input select"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+            value={stage}
+            onChange={(event) => setStage(event.target.value as StageFilter)}
           >
             <option value="">Wszystkie sprawy</option>
             <option value="w_toku">Tylko w toku</option>
@@ -132,101 +101,99 @@ export function RegisterView() {
         </div>
       </form>
 
-      {cases && (
+      {all && (
         <p className="register-summary" role="status">
-          {cases.length === 0
+          {all.length === 0
             ? 'Brak spraw.'
-            : `${cases.length} spraw · w toku ${open.length}${urgent.length ? ` · wymaga uwagi ${urgent.length}` : ''}`}
+            : `${all.length} spraw · w toku ${open.length}${urgentCount ? ` · wymaga uwagi ${urgentCount}` : ''}`}
         </p>
       )}
 
-      {error && (
-        <div className="notice notice-error" role="alert">
-          <p>
-            <strong>Nie udało się pobrać rejestru.</strong> {error}
-          </p>
-        </div>
-      )}
+      {cases.error && <ErrorNotice title="Nie udało się pobrać rejestru." message={cases.error} />}
+      {!all && !cases.error && <p className="field-hint">Wczytywanie rejestru…</p>}
 
-      {!cases && !error && <p className="field-hint">Wczytywanie rejestru…</p>}
-
-      {cases && cases.length === 0 && (
+      {all?.length === 0 && (
         <div className="empty">
           <p>
             {appliedQuery
               ? 'Żadna sprawa nie pasuje do wyszukiwania.'
               : `W roku ${year} nie ma jeszcze spraw. Dodaj wniosek albo zaimportuj rejestr z Excela w Bazie wiedzy.`}
           </p>
-          <a className="primary-button" href="#/">
+          <a className="primary-button" href={hrefFor({ name: 'intake' })}>
             Dodaj wniosek
           </a>
         </div>
       )}
 
-      {cases && cases.length > 0 && shown?.length === 0 && (
+      {all && all.length > 0 && shown.length === 0 && (
         <p className="register-summary">Żadna sprawa nie jest na wybranym etapie.</p>
       )}
 
-      {shown && shown.length > 0 && (
+      {shown.length > 0 && (
         <div className="table-wrap">
-          <table className="register">
+          <table className="data-table is-clickable">
             <thead>
               <tr>
-                <th scope="col" className="num">Lp.</th>
+                <th scope="col" className="num">
+                  Lp.
+                </th>
                 <th scope="col">Numer sprawy / osoba</th>
                 <th scope="col">Wnioskodawca</th>
                 <th scope="col">Przedmiot</th>
                 <th scope="col">Data wpływu</th>
                 <th scope="col">Termin</th>
-                <th scope="col" className="num">Pozostało dni</th>
+                <th scope="col" className="num">
+                  Pozostało dni
+                </th>
                 <th scope="col">Data odpowiedzi</th>
                 <th scope="col">Etap</th>
                 <th scope="col">Wydziały</th>
               </tr>
             </thead>
             <tbody>
-              {shown.map((c, i) => (
-                <tr
-                  key={c.id}
-                  className={`urgency-${c.urgency}`}
-                  onClick={() => navigate({ name: 'case', id: c.id })}
-                >
-                  <td className="num">{c.ordinal ?? i + 1}</td>
-                  <td className="nowrap">
-                    <a className="num" href={`#/sprawa/${c.id}`} onClick={(e) => e.stopPropagation()}>
-                      {c.case_number}
-                    </a>
-                    {c.initials && <span className="cell-note">{c.initials}</span>}
-                  </td>
-                  <td>{c.applicant || '—'}</td>
-                  <td className="subject-cell">
-                    {c.subject}
-                    {c.date_parse_warning && (
-                      <span className="cell-warning" title={c.date_parse_warning}>
-                        Uwaga do dat: {c.date_parse_warning}
+              {shown.map((item, index) => {
+                const label = urgencyLabel(item.urgency, soon_days)
+                return (
+                  <tr key={item.id} className={`urgency-${item.urgency}`} onClick={() => navigate({ name: 'case', id: item.id })}>
+                    <td className="num">{item.ordinal ?? index + 1}</td>
+                    <td className="nowrap">
+                      <a className="num" href={caseHref(item.id)} onClick={(event) => event.stopPropagation()}>
+                        {item.case_number}
+                      </a>
+                      {item.initials && <span className="cell-note">{item.initials}</span>}
+                    </td>
+                    <td>{item.applicant || '—'}</td>
+                    <td className="subject-cell">
+                      {item.subject}
+                      {item.date_parse_warning && (
+                        <span className="cell-warning" title={item.date_parse_warning}>
+                          Uwaga do dat: {item.date_parse_warning}
+                        </span>
+                      )}
+                    </td>
+                    <td className="num nowrap">{formatIso(item.received_date)}</td>
+                    <td className="num nowrap">
+                      {formatIso(item.deadline_date)}
+                      {label && <span className="urgency-label">{label}</span>}
+                      {item.extension_days > 0 && (
+                        <span className="cell-note" title={`Pierwotny termin ${formatIso(item.original_deadline_date)}`}>
+                          przedłużony +{item.extension_days} dni
+                        </span>
+                      )}
+                    </td>
+                    <td className="num">{remainingLabel(item)}</td>
+                    <td className="num nowrap">{formatIso(item.response_date)}</td>
+                    <td>
+                      <span className={isClosed(item.status) ? 'tag is-success' : 'tag'} title={STATUS_LABELS[item.status]}>
+                        {STATUS_SHORT[item.status]}
                       </span>
-                    )}
-                  </td>
-                  <td className="num nowrap">{formatIso(c.received_date)}</td>
-                  <td className="num nowrap">
-                    {formatIso(c.deadline_date)}
-                    {URGENCY_LABEL[c.urgency] && <span className="urgency-label">{URGENCY_LABEL[c.urgency]}</span>}
-                    {c.extension_days > 0 && (
-                      <span className="cell-note" title={`Pierwotny termin ${formatIso(c.original_deadline_date)}`}>
-                        przedłużony +{c.extension_days} dni
-                      </span>
-                    )}
-                  </td>
-                  <td className="num">{remaining(c)}</td>
-                  <td className="num nowrap">{formatIso(c.response_date)}</td>
-                  <td>
-                    <span className={`status status-${c.status}`} title={STATUS_LABELS[c.status]}>{STATUS_SHORT[c.status]}</span>
-                  </td>
-                  <td>
-                    <DeptCell c={c} />
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td>
+                      <DepartmentsCell item={item} />
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -235,17 +202,17 @@ export function RegisterView() {
   )
 }
 
-function DeptCell({ c }: { c: CaseItem }) {
-  if (c.dept_total === 0) return <span className="muted-cell">—</span>
-  const done = c.dept_answered === c.dept_total
+function DepartmentsCell({ item }: { item: CaseItem }) {
+  if (item.dept_total === 0) return <span className="muted-cell">—</span>
+  const allAnswered = item.dept_answered === item.dept_total
   return (
     <span className="dept-cell">
-      <span className={`num${done ? ' dept-done' : ''}`}>
-        {c.dept_answered}/{c.dept_total} odp.
+      <span className={allAnswered ? 'num dept-done' : 'num'}>
+        {item.dept_answered}/{item.dept_total} odp.
       </span>
-      {c.dept_waiting.length > 0 && <span className="cell-note">czekamy: {c.dept_waiting.join(', ')}</span>}
-      {c.dept_clarification.length > 0 && (
-        <span className="cell-note">uszczegółowienie: {c.dept_clarification.join(', ')}</span>
+      {item.dept_waiting.length > 0 && <span className="cell-note">czekamy: {item.dept_waiting.join(', ')}</span>}
+      {item.dept_clarification.length > 0 && (
+        <span className="cell-note">uszczegółowienie: {item.dept_clarification.join(', ')}</span>
       )}
     </span>
   )

@@ -1,12 +1,16 @@
-import { useEffect, useId, useMemo, useState } from 'react'
-import { FileDropzone } from '../components/FileDropzone'
-import { ApiError, analyzeRequest, type IntakeAnalysis } from '../lib/api'
-import { ANSWER_DAYS, deadlineFor, formatLong, formatWeekday, remainingText, todayIso } from '../lib/deadline'
-import { extensionOf, formatSize, validateFile } from '../lib/files'
+import { useId, useState, type FormEvent } from 'react'
+import { BusyButton } from '../../components/BusyButton'
+import { FileDropzone } from '../../components/FileDropzone'
+import { ErrorNotice, Notice } from '../../components/Notice'
+import { analyzeRequest, errorMessage, type IntakeAnalysis } from '../../lib/api'
+import { useFileRules } from '../../lib/config'
+import { parseIso, todayIso } from '../../lib/dates'
+import { focusById } from '../../lib/dom'
+import { extensionOf, formatSize, validateFile } from '../../lib/files'
 import { AnalysisPanel } from './AnalysisPanel'
-import { ShiftNote } from '../components/ShiftNote'
+import { DeadlineReadout } from './DeadlineReadout'
 
-type Rejection = { name?: string; reason: string }
+type Rejection = { fileName?: string; reason: string }
 
 type Status =
   | { kind: 'idle' }
@@ -15,61 +19,30 @@ type Status =
   | { kind: 'error'; message: string }
 
 const STEPS = [
-  {
-    title: 'Wgraj wniosek',
-    text: 'Dodaj plik PDF, Word lub skan z wnioskiem o udostępnienie informacji publicznej.',
-  },
-  {
-    title: 'Analiza i podobne sprawy',
-    text: 'Asystent odczyta treść, wskaże podobne wnioski z archiwum i właściwe wydziały.',
-  },
-  {
-    title: 'Termin w kalendarzu',
-    text: 'Wniosek trafi do rejestru z terminem odpowiedzi liczonym od daty wpływu.',
-  },
-  {
-    title: 'Projekt odpowiedzi',
-    text: 'Po wgraniu odpowiedzi z wydziałów powstanie projekt pisma z propozycją anonimizacji.',
-  },
+  { title: 'Wgraj wniosek', text: 'Dodaj plik PDF, Word lub skan z wnioskiem o udostępnienie informacji publicznej.' },
+  { title: 'Analiza i podobne sprawy', text: 'Asystent odczyta treść, wskaże podobne wnioski z archiwum i właściwe wydziały.' },
+  { title: 'Termin w kalendarzu', text: 'Wniosek trafi do rejestru z terminem odpowiedzi liczonym od daty wpływu.' },
+  { title: 'Projekt odpowiedzi', text: 'Po wgraniu odpowiedzi z wydziałów powstanie projekt pisma z propozycją anonimizacji.' },
 ]
 
-const errorText = (err: unknown) => (err instanceof ApiError || err instanceof Error ? err.message : 'Nieznany błąd.')
-
 export function IntakeView() {
+  const rules = useFileRules('request')
   const [file, setFile] = useState<File | null>(null)
   const [rejection, setRejection] = useState<Rejection | null>(null)
   const [receivedAt, setReceivedAt] = useState(todayIso)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [missingFile, setMissingFile] = useState(false)
-  const ids = {
-    date: useId(),
-    dateHint: useId(),
-    dateError: useId(),
-    dropHint: useId(),
-    drop: useId(),
-    fileError: useId(),
-  }
-
-  // Upuszczenie pliku poza strefą nie powinno otwierać go w przeglądarce.
-  useEffect(() => {
-    const block = (e: DragEvent) => e.preventDefault()
-    window.addEventListener('dragover', block)
-    window.addEventListener('drop', block)
-    return () => {
-      window.removeEventListener('dragover', block)
-      window.removeEventListener('drop', block)
-    }
-  }, [])
+  const ids = { date: useId(), dateHint: useId(), dateError: useId(), drop: useId(), dropHint: useId(), fileError: useId() }
 
   const today = todayIso()
-  const deadline = useMemo(() => deadlineFor(receivedAt), [receivedAt])
-  const dateError = !deadline
+  const dateError = !parseIso(receivedAt)
     ? 'Podaj datę wpływu wniosku.'
     : receivedAt > today
       ? 'Data wpływu nie może być późniejsza niż dzisiejsza.'
       : null
+  const uploading = status.kind === 'uploading'
+  const fileMissing = missingFile && !file
 
-  // Jeden wniosek = jeden plik.
   const addFiles = (files: File[]) => {
     setStatus({ kind: 'idle' })
     if (files.length > 1) {
@@ -77,9 +50,9 @@ export function IntakeView() {
       return
     }
     const [next] = files
-    const reason = validateFile(next)
+    const reason = validateFile(next, rules)
     if (reason) {
-      setRejection({ name: next.name, reason })
+      setRejection({ fileName: next.name, reason })
       return
     }
     setFile(next)
@@ -91,10 +64,10 @@ export function IntakeView() {
     setFile(null)
     setRejection(null)
     setStatus({ kind: 'idle' })
-    requestAnimationFrame(() => document.getElementById(ids.drop)?.focus())
+    requestAnimationFrame(() => focusById(ids.drop))
   }
 
-  const startNext = () => {
+  const restart = () => {
     setFile(null)
     setRejection(null)
     setMissingFile(false)
@@ -102,34 +75,27 @@ export function IntakeView() {
     setReceivedAt(todayIso())
   }
 
-  const uploading = status.kind === 'uploading'
-
-  const submit = async (e?: { preventDefault: () => void }) => {
-    e?.preventDefault()
+  // Wzorzec gov.pl: przycisk zawsze aktywny, a błędy pojawiają się przy polach po próbie wysłania.
+  const submit = async (event?: FormEvent) => {
+    event?.preventDefault()
     if (uploading) return
-    // Wzorzec gov.pl: przycisk zawsze aktywny, błędy pokazywane przy polach po próbie wysłania.
-    if (dateError) {
-      document.getElementById(ids.date)?.focus()
-      return
-    }
+    if (dateError) return focusById(ids.date)
     if (!file) {
       setMissingFile(true)
-      document.getElementById(ids.drop)?.focus()
-      return
+      return focusById(ids.drop)
     }
     setStatus({ kind: 'uploading' })
     try {
-      const analysis = await analyzeRequest({ file, receivedAt })
-      setStatus({ kind: 'analyzed', analysis, file, receivedAt })
-    } catch (err) {
-      setStatus({ kind: 'error', message: errorText(err) })
+      setStatus({ kind: 'analyzed', analysis: await analyzeRequest(file, receivedAt), file, receivedAt })
+    } catch (failure) {
+      setStatus({ kind: 'error', message: errorMessage(failure) })
     }
   }
 
-  /** Ponowna analiza z treścią wpisaną ręcznie (skan nieczytelny dla OCR). */
+  /** Ponowna analiza z treścią przepisaną przez urzędnika, gdy skan jest nieczytelny dla OCR. */
   const reanalyze = async (manualText: string) => {
     if (status.kind !== 'analyzed') return
-    const analysis = await analyzeRequest({ file: status.file, receivedAt: status.receivedAt, manualText })
+    const analysis = await analyzeRequest(status.file, status.receivedAt, manualText)
     setStatus({ ...status, analysis })
   }
 
@@ -140,8 +106,8 @@ export function IntakeView() {
       <section className="intro">
         <h1>Nowy wniosek o informację publiczną</h1>
         <p className="lead">
-          Wgraj wniosek, a asystent przygotuje analizę, propozycję wydziałów i termin odpowiedzi. Ostateczną
-          decyzję zawsze podejmuje urzędnik.
+          Wgraj wniosek, a asystent przygotuje analizę, propozycję wydziałów i termin odpowiedzi. Ostateczną decyzję
+          zawsze podejmuje urzędnik.
         </p>
       </section>
 
@@ -150,18 +116,13 @@ export function IntakeView() {
           Krok {currentStep} z {STEPS.length}: <strong>{STEPS[currentStep - 1].title}</strong>
         </p>
         <ol>
-          {STEPS.map((step, i) => {
-            const n = i + 1
-            const state = n < currentStep ? 'done' : n === currentStep ? 'current' : 'todo'
+          {STEPS.map((step, index) => {
+            const state = index + 1 < currentStep ? 'done' : index + 1 === currentStep ? 'current' : 'todo'
             return (
-              <li
-                key={step.title}
-                className={`stepper-item is-${state}`}
-                aria-current={state === 'current' ? 'step' : undefined}
-              >
+              <li key={step.title} className={`stepper-item is-${state}`} aria-current={state === 'current' ? 'step' : undefined}>
                 <span className="visually-hidden">
                   {step.title}
-                  {state === 'done' ? ' (zakończony)' : ''}
+                  {state === 'done' && ' (zakończony)'}
                 </span>
               </li>
             )
@@ -171,14 +132,15 @@ export function IntakeView() {
 
       {status.kind === 'analyzed' ? (
         <AnalysisPanel
+          key={status.analysis.intake_id}
           analysis={status.analysis}
           fileName={status.file.name}
           receivedAt={status.receivedAt}
           onReanalyze={reanalyze}
-          onCancel={startNext}
+          onRestart={restart}
         />
       ) : (
-        <form className="intake" onSubmit={submit} aria-busy={uploading} noValidate>
+        <form className="form" onSubmit={submit} aria-busy={uploading} noValidate>
           <div className={`field${dateError ? ' has-error' : ''}`}>
             <label className="field-label" htmlFor={ids.date}>
               Data wpływu
@@ -202,25 +164,25 @@ export function IntakeView() {
                 required
                 disabled={uploading}
                 aria-invalid={!!dateError}
-                aria-describedby={`${ids.dateHint}${dateError ? ` ${ids.dateError}` : ''}`}
-                onChange={(e) => {
-                  setReceivedAt(e.target.value)
+                aria-describedby={dateError ? `${ids.dateHint} ${ids.dateError}` : ids.dateHint}
+                onChange={(event) => {
+                  setReceivedAt(event.target.value)
                   if (status.kind === 'error') setStatus({ kind: 'idle' })
                 }}
               />
-              <DeadlineReadout receivedAt={receivedAt} valid={!dateError} />
+              <DeadlineReadout receivedAt={dateError ? null : receivedAt} />
             </div>
           </div>
 
-          <section className={`field${missingFile && !file ? ' has-error' : ''}`} aria-labelledby="upload-heading">
-            <h2 id="upload-heading" className="field-label">
+          <section className={`field${fileMissing ? ' has-error' : ''}`} aria-labelledby={`${ids.drop}-heading`}>
+            <h2 id={`${ids.drop}-heading`} className="field-label">
               Plik wniosku
             </h2>
             <p id={ids.dropHint} className="field-hint">
-              Jeden plik: dokument PDF lub Word albo skan pisma (JPG, PNG, TIFF).
+              Jeden plik: dokument albo skan pisma.
             </p>
 
-            {missingFile && !file && (
+            {fileMissing && (
               <p id={ids.fileError} className="field-error">
                 <span className="visually-hidden">Błąd: </span>
                 Dodaj plik wniosku.
@@ -247,44 +209,39 @@ export function IntakeView() {
             ) : (
               <FileDropzone
                 id={ids.drop}
+                itemName="wniosek"
+                rules={rules}
                 onFiles={addFiles}
                 disabled={uploading}
                 invalid={missingFile}
-                describedBy={`${ids.dropHint}${missingFile ? ` ${ids.fileError}` : ''}`}
+                describedBy={fileMissing ? `${ids.dropHint} ${ids.fileError}` : ids.dropHint}
               />
             )}
 
             <div aria-live="polite">
               {rejection && (
-                <div className="notice notice-warning">
-                  <strong>Nie dodano pliku.</strong>
+                <Notice tone="warning" title="Nie dodano pliku.">
                   <p>
-                    {rejection.name && <span className="notice-file">{rejection.name} — </span>}
+                    {rejection.fileName && <span className="notice-file">{rejection.fileName} — </span>}
                     {rejection.reason}
                   </p>
-                </div>
+                </Notice>
               )}
             </div>
           </section>
 
-          {status.kind === 'error' && (
-            <div className="notice notice-error" role="alert">
-              <p>
-                <strong>Nie udało się przeanalizować wniosku.</strong> {status.message}
-              </p>
+          {status.kind === 'error' ? (
+            <ErrorNotice title="Nie udało się przeanalizować wniosku." message={status.message}>
               <p>Plik pozostał w formularzu — możesz spróbować ponownie.</p>
               <button type="button" className="secondary-button" onClick={() => submit()}>
                 Spróbuj ponownie
               </button>
-            </div>
-          )}
-
-          {status.kind !== 'error' && (
+            </ErrorNotice>
+          ) : (
             <div className="actions">
-              <button type="submit" className="primary-button" disabled={uploading}>
-                {uploading && <span className="spinner" aria-hidden="true" />}
-                {uploading ? 'Analizowanie…' : 'Analizuj wniosek'}
-              </button>
+              <BusyButton type="submit" busy={uploading} busyLabel="Analizowanie…">
+                Analizuj wniosek
+              </BusyButton>
               {uploading && (
                 <span className="field-hint">Odczyt dokumentu i analiza trwają zwykle kilka sekund, skan do kilkunastu.</span>
               )}
@@ -302,10 +259,10 @@ export function IntakeView() {
             Jak to działa
           </h2>
           <ol>
-            {STEPS.map((step, i) => (
+            {STEPS.map((step, index) => (
               <li key={step.title} className="step">
                 <span className="step-num" aria-hidden="true">
-                  {i + 1}
+                  {index + 1}
                 </span>
                 <div>
                   <h3>{step.title}</h3>
@@ -317,30 +274,5 @@ export function IntakeView() {
         </section>
       )}
     </>
-  )
-}
-
-function DeadlineReadout({ receivedAt, valid }: { receivedAt: string; valid: boolean }) {
-  const info = valid ? deadlineFor(receivedAt) : null
-  if (!info) {
-    return (
-      <div className="deadline is-empty" aria-live="polite">
-        <span className="deadline-label">Termin odpowiedzi</span>
-        <span className="deadline-date">—</span>
-      </div>
-    )
-  }
-  const tone = info.remaining < 0 ? 'is-late' : info.remaining <= 3 ? 'is-near' : ''
-  return (
-    <div className={`deadline ${tone}`} aria-live="polite">
-      <span className="deadline-label">Termin odpowiedzi</span>
-      <span className="deadline-date">
-        {formatLong(info.deadline)}, {formatWeekday(info.deadline)}
-      </span>
-      <span className="deadline-meta">
-        {ANSWER_DAYS} dni od daty wpływu (art. 13 ust. 1 u.d.i.p.) · {remainingText(info.remaining)}
-      </span>
-      {info.nonWorkingDay && <ShiftNote day14={info.day14} nextWorking={info.nextWorking} />}
-    </div>
   )
 }

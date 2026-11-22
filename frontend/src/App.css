@@ -58,7 +58,7 @@
   color: var(--text-secondary);
 }
 
-.badge-local {
+.model-badge {
   flex: none;
   font-size: 14px;
   font-weight: 600;
@@ -122,7 +122,7 @@
 }
 
 /* --- Formularz --- */
-.intake {
+.form {
   margin-top: 28px;
   display: flex;
   flex-direction: column;
@@ -185,7 +185,7 @@
   flex-wrap: wrap;
 }
 
-/* --- Termin odpowiedzi --- */
+/* --- Termin odpowiedzi (kolory pilności z klas urgency-*) --- */
 .deadline {
   flex: 1 1 320px;
   display: flex;
@@ -193,8 +193,8 @@
   justify-content: center;
   gap: 2px;
   padding: 12px 18px;
-  background: var(--surface-tint);
-  border: 1px solid var(--tint-border);
+  background: var(--urgency-fill, var(--surface-tint));
+  border: 1px solid var(--urgency-edge, var(--tint-border));
   border-radius: var(--radius);
 }
 
@@ -215,27 +215,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.deadline.is-near {
-  background: var(--warning-tint);
-  border-color: var(--warning-border);
-}
-
-.deadline.is-near .deadline-meta {
-  color: var(--warning);
-  font-weight: 600;
-}
-
-.deadline.is-late {
-  background: var(--danger-tint);
-  border-color: var(--danger);
-}
-
-.deadline.is-late .deadline-meta {
-  color: var(--danger);
-  font-weight: 600;
-}
-
-.deadline-shift {
+.deadline-note {
   margin-top: 4px;
   font-size: 15px;
 }
@@ -260,15 +240,14 @@
     background-color 0.15s ease-out;
 }
 
-.dropzone:hover {
+.dropzone:hover,
+.dropzone.is-dragging {
   border-color: var(--accent);
   background: var(--accent-tint);
 }
 
 .dropzone.is-dragging {
   border-style: solid;
-  border-color: var(--accent);
-  background: var(--accent-tint);
 }
 
 .dropzone.is-invalid {
@@ -404,6 +383,16 @@
   overflow-wrap: anywhere;
 }
 
+.notice-info {
+  border-color: var(--tint-border);
+  background: var(--surface-tint);
+}
+
+.notice-success {
+  border-color: var(--success);
+  background: var(--success-tint);
+}
+
 .notice-warning {
   border-color: var(--warning-border);
   background: var(--warning-tint);
@@ -427,6 +416,10 @@
   gap: 12px 20px;
 }
 
+.actions.compact {
+  gap: 8px 16px;
+}
+
 .primary-button,
 .secondary-button {
   display: inline-flex;
@@ -435,9 +428,11 @@
   gap: 10px;
   min-height: 48px;
   padding: 10px 24px;
+  border: 2px solid var(--accent);
   border-radius: var(--radius);
   font-size: 17px;
   font-weight: 600;
+  text-decoration: none;
   cursor: pointer;
   transition:
     background-color 0.15s ease-out,
@@ -445,7 +440,6 @@
 }
 
 .primary-button {
-  border: 2px solid var(--accent);
   background: var(--accent);
   color: #fff;
 }
@@ -459,23 +453,22 @@
   background: var(--accent-active);
 }
 
-.primary-button:disabled {
-  border-color: var(--disabled-bg);
-  background: var(--disabled-bg);
-  color: var(--disabled-text);
-  cursor: not-allowed;
-}
-
 .secondary-button {
   min-height: 44px;
-  margin-top: 4px;
-  border: 2px solid var(--accent);
   background: #fff;
   color: var(--accent);
 }
 
-.secondary-button:hover {
+.secondary-button:hover:not(:disabled) {
   background: var(--accent-tint);
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  border-color: var(--disabled-bg);
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+  cursor: not-allowed;
 }
 
 .spinner {
@@ -507,7 +500,7 @@
   }
 }
 
-/* --- Potwierdzenie --- */
+/* --- Potwierdzenie rejestracji --- */
 .confirmation {
   margin-top: 40px;
   padding: 28px 32px 32px;
@@ -540,54 +533,8 @@
   font-weight: 700;
 }
 
-.confirmation h2:focus {
-  outline: none;
-}
-
 .confirmation-head p {
   margin-top: 4px;
-}
-
-.summary {
-  margin: 0;
-  width: 100%;
-  border-top: 1px solid var(--rule);
-}
-
-.summary > div {
-  display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 16px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--rule);
-}
-
-.summary dt {
-  font-weight: 700;
-}
-
-.summary dd {
-  margin: 0;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.summary .num {
-  font-variant-numeric: tabular-nums;
-}
-
-.summary .deadline-shift {
-  display: block;
-}
-
-.summary-meta {
-  display: block;
-  font-size: 15px;
-  color: var(--text-secondary);
-}
-
-.confirmation-next {
-  max-width: 62ch;
 }
 
 /* --- Jak to działa --- */
@@ -655,10 +602,6 @@
     padding-right: 16px;
   }
 
-  .main {
-    padding-top: 32px;
-  }
-
   .intro h1 {
     font-size: 27px;
   }
@@ -698,11 +641,6 @@
 
   .steps ol {
     grid-template-columns: 1fr;
-  }
-
-  .summary > div {
-    grid-template-columns: 1fr;
-    gap: 2px;
   }
 
   .confirmation {

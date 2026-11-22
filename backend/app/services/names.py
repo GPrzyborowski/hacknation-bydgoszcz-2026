@@ -1,9 +1,11 @@
-"""Wykrywanie imion i nazwisk bez modelu językowego: popularne polskie imiona + następujący wyraz wielką literą.
+"""Wykrywanie imion i nazwisk bez modelu językowego: popularne polskie imię i następujący po nim wyraz wielką literą.
 
 Dopasowanie obejmuje odmianę („Jan Kowalski”, „Jana Kowalskiego”, „Annie Nowak”). Wynik to wyłącznie
-podpowiedź do anonimizacji — urzędnik odznacza osoby pełniące funkcje publiczne.
+podpowiedź do anonimizacji — osoby pełniące funkcje publiczne urzędnik odznacza.
 """
 import re
+
+from services.patterns import PL_LOWER, PL_UPPER, STREET_PREFIX
 
 FIRST_NAMES = """
 Adam Adrian Albert Aleksander Andrzej Antoni Arkadiusz Artur Bartłomiej Bartosz Bogdan Bogusław Bolesław Cezary
@@ -19,39 +21,35 @@ Marianna Marta Marzena Monika Natalia Nikola Olga Oliwia Patrycja Paulina Renata
 Teresa Urszula Wanda Weronika Wiesława Wiktoria Zofia Zuzanna
 """.split()
 
-_UP = "A-ZŁŚŻŹĆŃÓĘĄ"
-_LO = "a-ząćęłńóśźż"
+# Wyrazy, które po imieniu nie są nazwiskiem (np. „Jana Pawła II” zostaje — urzędnik je odznaczy).
+_NOT_SURNAMES = {"Miasta", "Urzędu", "Wydziału", "Bydgoszczy", "Bydgoszcz", "Prezydenta", "Rady"}
 
 
-def _stem_pattern(name: str) -> str:
-    # Imiona żeńskie na -a: Anna/Anny/Annie/Annę/Anną; męskie: Jan/Jana/Janowi/Janem/Janie;
-    # imiona z „e” ruchomym (Marek → Marka) dopuszczamy przez krótszy rdzeń.
+def _inflected(name: str) -> str:
+    """Wzorzec imienia w odmianie: Anna/Anny/Annie/Annę/Anną, Jan/Jana/Janowi/Janem, Marek/Marka (ruchome „e”)."""
     if name.endswith("a"):
-        return re.escape(name[:-1]) + f"(?:a|y|i|ie|ę|ą)"
+        return re.escape(name[:-1]) + "(?:a|y|i|ie|ę|ą)"
     if name.endswith("ek"):
-        return re.escape(name[:-2]) + f"(?:ek|ka|kowi|kiem|ku)"
-    return re.escape(name) + f"(?:a|owi|em|ie|u)?"
+        return re.escape(name[:-2]) + "(?:ek|ka|kowi|kiem|ku)"
+    return re.escape(name) + "(?:a|owi|em|ie|u)?"
 
 
-_FIRST = "|".join(sorted((_stem_pattern(n) for n in FIRST_NAMES), key=len, reverse=True))
-PERSON_RE = re.compile(
-    rf"\b(?:{_FIRST})\s+[{_UP}][{_LO}]+(?:-[{_UP}][{_LO}]+)?\b"
-    rf"|\b[{_UP}]\.\s?[{_UP}][{_LO}]{{2,}}(?:-[{_UP}][{_LO}]+)?\b"  # „E. Góra”
+_FIRST_NAME = "|".join(sorted((_inflected(name) for name in FIRST_NAMES), key=len, reverse=True))
+_SURNAME = f"[{PL_UPPER}][{PL_LOWER}]+(?:-[{PL_UPPER}][{PL_LOWER}]+)?"
+PERSON = re.compile(
+    rf"\b(?:{_FIRST_NAME})\s+{_SURNAME}\b"
+    rf"|\b[{PL_UPPER}]\.\s?[{PL_UPPER}][{PL_LOWER}]{{2,}}(?:-[{PL_UPPER}][{PL_LOWER}]+)?\b"  # „E. Góra”
 )
-
-# Wyrazy, które po imieniu zwykle nie są nazwiskiem (np. „Jana Pawła II”, „Marii Konopnickiej” jako nazwy ulic
-# zostają — urzędnik je odznaczy; tu wykluczamy tylko oczywiste przypadki).
-_NOT_SURNAME = {"Miasta", "Urzędu", "Wydziału", "Bydgoszczy", "Bydgoszcz", "Prezydenta", "Rady"}
+_STREET_BEFORE = re.compile(rf"{STREET_PREFIX}\s*$")
 
 
 def find_people(text: str) -> list[tuple[int, int]]:
     spans = []
-    for m in PERSON_RE.finditer(text):
-        last = m.group(0).split()[-1]
-        if last in _NOT_SURNAME:
+    for match in PERSON.finditer(text):
+        if match.group(0).split()[-1] in _NOT_SURNAMES:
             continue
-        # Nazwa ulicy („ul. Jana Pawła”) to nie osoba — pomijamy, gdy tuż przed stoi „ul.”/„al.”/„pl.”/„os.”.
-        if re.search(r"(?:ul|al|pl|os)\.\s*$", text[max(0, m.start() - 6) : m.start()]):
+        # „ul. Jana Pawła” to nazwa ulicy, nie osoba.
+        if _STREET_BEFORE.search(text[max(0, match.start() - 6) : match.start()]):
             continue
-        spans.append((m.start(), m.end()))
+        spans.append((match.start(), match.end()))
     return spans

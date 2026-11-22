@@ -1,127 +1,121 @@
-import { useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
-import { ACCEPTED_LABEL, ACCEPT_ATTR, MAX_FILE_SIZE, formatSize } from '../lib/files'
+import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
+import { cx } from '../lib/dom'
+import { formatSize, formatsLabel, type FileRules } from '../lib/files'
 
 type Props = {
   id?: string
-  invalid?: boolean
+  /** Co dodaje urzędnik, w bierniku: „wniosek”, „odpowiedź wydziału”. */
+  itemName: string
+  rules: FileRules
   onFiles: (files: File[]) => void
+  invalid?: boolean
   disabled?: boolean
   describedBy?: string
-  /** Nagłówek strefy, np. „Przeciągnij i upuść odpowiedź wydziału tutaj”. */
-  title?: string
 }
 
-export function FileDropzone({
-  id,
-  invalid = false,
-  onFiles,
-  disabled = false,
-  describedBy,
-  title = 'Przeciągnij i upuść wniosek tutaj',
-}: Props) {
+const carriesFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files')
+
+/** Plik upuszczony obok strefy nie może otworzyć się w karcie przeglądarki zamiast formularza. */
+function useBlockWindowDrop() {
+  useEffect(() => {
+    const block = (event: Event) => event.preventDefault()
+    window.addEventListener('dragover', block)
+    window.addEventListener('drop', block)
+    return () => {
+      window.removeEventListener('dragover', block)
+      window.removeEventListener('drop', block)
+    }
+  }, [])
+}
+
+export function FileDropzone({ id, itemName, rules, onFiles, invalid = false, disabled = false, describedBy }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const dragDepth = useRef(0)
   const [isDragging, setIsDragging] = useState(false)
+  useBlockWindowDrop()
 
   const openPicker = () => {
     if (!disabled) inputRef.current?.click()
   }
 
-  const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer.types).includes('Files')
-
-  const handleDragEnter = (e: DragEvent) => {
-    if (disabled || !hasFiles(e)) return
-    e.preventDefault()
+  const onDragEnter = (event: DragEvent) => {
+    if (disabled || !carriesFiles(event)) return
+    event.preventDefault()
     dragDepth.current += 1
     setIsDragging(true)
   }
 
-  const handleDragOver = (e: DragEvent) => {
-    if (disabled || !hasFiles(e)) return
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'copy'
+  const onDragOver = (event: DragEvent) => {
+    if (disabled || !carriesFiles(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
   }
 
-  const handleDragLeave = (e: DragEvent) => {
-    if (disabled || !hasFiles(e)) return
+  const onDragLeave = (event: DragEvent) => {
+    if (disabled || !carriesFiles(event)) return
     dragDepth.current = Math.max(0, dragDepth.current - 1)
     if (dragDepth.current === 0) setIsDragging(false)
   }
 
-  const handleDrop = (e: DragEvent) => {
-    e.preventDefault()
+  const onDrop = (event: DragEvent) => {
+    event.preventDefault()
     dragDepth.current = 0
     setIsDragging(false)
-    if (disabled) return
-    const files = Array.from(e.dataTransfer.files)
-    if (files.length) onFiles(files)
+    const files = Array.from(event.dataTransfer.files)
+    if (!disabled && files.length) onFiles(files)
   }
 
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      openPicker()
-    }
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    openPicker()
   }
 
   return (
     <div
       id={id}
-      className={`dropzone${isDragging ? ' is-dragging' : ''}${disabled ? ' is-disabled' : ''}${invalid ? ' is-invalid' : ''}`}
+      className={cx('dropzone', isDragging && 'is-dragging', disabled && 'is-disabled', invalid && 'is-invalid')}
       role="button"
-      // Pozostaje w kolejności tabulacji podczas wysyłania, żeby fokus nie przepadał.
+      // Strefa zostaje w kolejności tabulacji także podczas wysyłania, żeby fokus nie przepadał.
       tabIndex={0}
       aria-disabled={disabled}
       aria-invalid={invalid || undefined}
-      aria-label="Dodaj plik wniosku: przeciągnij i upuść lub wybierz z dysku"
+      aria-label={`Dodaj ${itemName}: przeciągnij i upuść plik lub wybierz go z dysku`}
       aria-describedby={describedBy}
       onClick={openPicker}
-      onKeyDown={handleKeyDown}
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      onKeyDown={onKeyDown}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <svg className="dropzone-icon" viewBox="0 0 48 48" aria-hidden="true">
-        <path
-          d="M14 6h14l10 10v24a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinejoin="round"
-        />
-        <path d="M28 6v10h10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />
-        <path
-          d="M25 36V22m-6 6 6-6 6 6"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <g fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round">
+          <path d="M14 6h14l10 10v24a2 2 0 0 1-2 2H14a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z" />
+          <path d="M28 6v10h10" />
+          <path d="M25 36V22m-6 6 6-6 6 6" strokeLinecap="round" />
+        </g>
       </svg>
 
-      <div className="dropzone-text">
-        <p className="dropzone-title">
-          {isDragging ? 'Upuść plik, aby go dodać' : title}
-        </p>
+      <div>
+        <p className="dropzone-title">{isDragging ? 'Upuść plik, aby go dodać' : `Przeciągnij i upuść ${itemName} tutaj`}</p>
         <p className="dropzone-sub">
           lub <span className="dropzone-link">wybierz plik z dysku</span>
         </p>
         <p className="dropzone-hint">
-          {ACCEPTED_LABEL} · jeden plik do {formatSize(MAX_FILE_SIZE)}
+          {formatsLabel(rules.extensions)} · jeden plik do {formatSize(rules.maxBytes)}
         </p>
       </div>
 
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPT_ATTR}
+        accept={rules.extensions.join(',')}
         hidden
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? [])
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? [])
           if (files.length) onFiles(files)
-          e.target.value = ''
+          event.target.value = ''
         }}
       />
     </div>

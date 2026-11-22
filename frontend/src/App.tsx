@@ -1,37 +1,29 @@
-import { useEffect, useState } from 'react'
-import { getHealth, type Health } from './lib/api'
+import { ErrorNotice } from './components/Notice'
+import { getConfig, type AppConfig } from './lib/api'
+import { ConfigContext } from './lib/config'
+import { cx } from './lib/dom'
+import { useQuery } from './lib/hooks'
 import { hrefFor, useRoute, type Route } from './lib/router'
 import { CalendarView } from './views/CalendarView'
-import { CaseView } from './views/CaseView'
-import { IntakeView } from './views/IntakeView'
+import { CaseView } from './views/case/CaseView'
+import { IntakeView } from './views/intake/IntakeView'
 import { KnowledgeView } from './views/KnowledgeView'
 import { RegisterView } from './views/RegisterView'
 import './App.css'
 import './views.css'
 
-const TABS: { route: Route; label: string; match: Route['name'][] }[] = [
-  { route: { name: 'intake' }, label: 'Nowy wniosek', match: ['intake'] },
-  { route: { name: 'register' }, label: 'Rejestr wniosków', match: ['register', 'case'] },
-  { route: { name: 'calendar' }, label: 'Kalendarium', match: ['calendar'] },
-  { route: { name: 'knowledge' }, label: 'Baza wiedzy', match: ['knowledge'] },
+const TABS: { route: Route; label: string; alsoCurrentOn?: Route['name'] }[] = [
+  { route: { name: 'intake' }, label: 'Nowy wniosek' },
+  { route: { name: 'register' }, label: 'Rejestr wniosków', alsoCurrentOn: 'case' },
+  { route: { name: 'calendar' }, label: 'Kalendarium' },
+  { route: { name: 'knowledge' }, label: 'Baza wiedzy' },
 ]
 
-function App() {
+export default function App() {
   const route = useRoute()
-  const [health, setHealth] = useState<Health | null>(null)
-  const [backendDown, setBackendDown] = useState(false)
-
-  useEffect(() => {
-    let alive = true
-    getHealth()
-      .then((h) => alive && setHealth(h))
-      .catch(() => alive && setBackendDown(true))
-    return () => {
-      alive = false
-    }
-  }, [])
-
-  const wide = route.name === 'register' || route.name === 'calendar' || route.name === 'case' || route.name === 'knowledge'
+  const config = useQuery(getConfig)
+  // Formularz wniosku ma wąską kolumnę do czytania; rejestr, kalendarium i karta sprawy potrzebują szerokości.
+  const wide = route.name !== 'intake'
 
   return (
     <div className="page">
@@ -45,28 +37,17 @@ function App() {
             <span className="brand-name">Asystent UDIP</span>
             <span className="brand-org">Urząd Miasta Bydgoszczy</span>
           </div>
-          {health && (
-            <span
-              className="badge-local"
-              title={
-                health.llm_enabled
-                  ? 'Treść wniosków jest analizowana przez model Google Gemini — używaj danych testowych.'
-                  : 'Brak klucza Gemini — analiza regułowa'
-              }
-            >
-              {health.llm_enabled ? `Model: ${health.model}` : 'Bez modelu (analiza regułowa)'}
-            </span>
-          )}
+          {config.data && <ModelBadge config={config.data} />}
         </div>
         <nav className="tabs" aria-label="Sekcje">
           <div className="container container-wide tabs-inner">
             {TABS.map((tab) => {
-              const current = tab.match.includes(route.name)
+              const current = route.name === tab.route.name || route.name === tab.alsoCurrentOn
               return (
                 <a
                   key={tab.label}
                   href={hrefFor(tab.route)}
-                  className={`tab${current ? ' is-current' : ''}`}
+                  className={cx('tab', current && 'is-current')}
                   aria-current={current ? 'page' : undefined}
                 >
                   {tab.label}
@@ -77,23 +58,24 @@ function App() {
         </nav>
       </header>
 
-      <main id="tresc" className={`container main${wide ? ' container-wide' : ''}`}>
-        {backendDown && (
-          <div className="notice notice-error" role="alert">
-            <p>
-              <strong>Brak połączenia z serwerem aplikacji.</strong> Uruchom backend (docker compose up) i odśwież stronę.
-            </p>
-          </div>
+      <main id="tresc" className={cx('container main', wide && 'container-wide')}>
+        {config.data ? (
+          <ConfigContext value={config.data}>
+            <Page route={route} />
+          </ConfigContext>
+        ) : config.error ? (
+          <ErrorNotice title="Brak połączenia z serwerem aplikacji." message={config.error}>
+            <button type="button" className="secondary-button" onClick={config.reload}>
+              Spróbuj ponownie
+            </button>
+          </ErrorNotice>
+        ) : (
+          <p className="field-hint">Łączenie z serwerem…</p>
         )}
-        {route.name === 'intake' && <IntakeView />}
-        {route.name === 'register' && <RegisterView />}
-        {route.name === 'calendar' && <CalendarView />}
-        {route.name === 'case' && <CaseView key={route.id} id={route.id} />}
-        {route.name === 'knowledge' && <KnowledgeView />}
       </main>
 
       <footer className="footer">
-        <div className={`container${wide ? ' container-wide' : ''}`}>
+        <div className={cx('container', wide && 'container-wide')}>
           Narzędzie pomocnicze · nic nie jest wysyłane automatycznie do wydziałów ani wnioskodawców
         </div>
       </footer>
@@ -101,4 +83,32 @@ function App() {
   )
 }
 
-export default App
+function ModelBadge({ config }: { config: AppConfig }) {
+  return (
+    <span
+      className="model-badge"
+      title={
+        config.llm_enabled
+          ? 'Treść wniosków analizuje model Google Gemini — używaj danych testowych.'
+          : 'Brak klucza Gemini — analiza regułowa.'
+      }
+    >
+      {config.llm_enabled ? `Model: ${config.model}` : 'Bez modelu (analiza regułowa)'}
+    </span>
+  )
+}
+
+function Page({ route }: { route: Route }) {
+  switch (route.name) {
+    case 'intake':
+      return <IntakeView />
+    case 'register':
+      return <RegisterView />
+    case 'calendar':
+      return <CalendarView />
+    case 'knowledge':
+      return <KnowledgeView />
+    case 'case':
+      return <CaseView key={route.id} id={route.id} />
+  }
+}

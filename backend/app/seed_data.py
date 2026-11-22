@@ -12,6 +12,7 @@
 """
 
 MASK = "[ANONIMIZACJA]"
+NAME_CATEGORY = "Imię i nazwisko osoby fizycznej (niepełniącej funkcji publicznej)"
 
 DEPARTMENTS: list[tuple[str, str, str]] = [
     ("WAB", "Wydział Administracji Budowlanej", "dokumentacja budowlana, projekt zagospodarowania terenu, akta sprawy budowlanej, apartamentowiec, pozwolenie na budowę, budowa, budynek, rozbiórka, zgłoszenie robót, nadzór budowlany, projekt budowlany, użytkowanie obiektu"),
@@ -49,7 +50,7 @@ DEPARTMENTS: list[tuple[str, str, str]] = [
 # Lista kategorii 1:1 wg „Dane podlegające anonimizacji.txt” (materiały UMB). Regexy podpowiadają fragmenty
 # do zaczernienia — kategorie bez regexu wskazuje model językowy lub urzędnik.
 ANONYMIZATION_CATEGORIES: list[tuple[str, str, str | None, str]] = [
-    ("Imię i nazwisko osoby fizycznej (niepełniącej funkcji publicznej)", "art. 5 ust. 2 u.d.i.p.", None, MASK),
+    (NAME_CATEGORY, "art. 5 ust. 2 u.d.i.p.", None, MASK),
     ("Numer PESEL", "art. 5 ust. 2 u.d.i.p.; art. 87 RODO", r"\b\d{11}\b", MASK),
     ("Numer i seria dowodu osobistego lub innego dokumentu tożsamości", "art. 5 ust. 2 u.d.i.p.",
      r"\b[A-Z]{3}\s?\d{6}\b|\b[A-Z]{2}\s?\d{7}\b", MASK),

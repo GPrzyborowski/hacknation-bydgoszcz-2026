@@ -1,18 +1,20 @@
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
-/** Analiza z OCR i modelem Gemini trwa zwykle kilka sekund; po 3 minutach pokazujemy błąd zamiast czekać. */
-const TIMEOUT_MS = 3 * 60 * 1000
+/** Analiza z OCR i modelem trwa zwykle kilka sekund; po tym czasie pokazujemy błąd zamiast czekać. */
+const TIMEOUT_MINUTES = 3
 
 export class ApiError extends Error {
   status: number
+
   constructor(message: string, status = 0) {
     super(message)
     this.status = status
   }
 }
 
-/** Zachowane dla ekranu wgrywania. */
-export { ApiError as UploadError }
+export function errorMessage(error: unknown, fallback = 'Nieznany błąd.'): string {
+  return error instanceof Error ? error.message : fallback
+}
 
 function messageForStatus(status: number): string {
   if (status === 413) return 'Plik jest zbyt duży dla serwera.'
@@ -26,53 +28,73 @@ function messageForStatus(status: number): string {
   return `Serwer odrzucił żądanie (kod ${status}).`
 }
 
-async function detailOf(res: Response): Promise<string | null> {
-  const data: unknown = await res.json().catch(() => null)
-  if (data && typeof data === 'object' && 'detail' in data) {
-    const detail = (data as { detail: unknown }).detail
-    if (typeof detail === 'string') return detail
-    if (Array.isArray(detail)) {
-      return detail
-        .map((d) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : ''))
-        .filter(Boolean)
-        .join('; ')
-    }
+/** Komunikat z pola `detail` odpowiedzi FastAPI (tekst albo lista błędów walidacji). */
+async function detailOf(response: Response): Promise<string | null> {
+  const data: unknown = await response.json().catch(() => null)
+  if (!data || typeof data !== 'object' || !('detail' in data)) return null
+  const { detail } = data as { detail: unknown }
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail.map((item) => (item && typeof item === 'object' && 'msg' in item ? String(item.msg) : '')).filter(Boolean).join('; ')
   }
   return null
 }
 
 async function request(path: string, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
-  let res: Response
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MINUTES * 60_000)
+  let response: Response
   try {
-    res = await fetch(`${API_URL}${path}`, { ...init, signal: controller.signal })
+    response = await fetch(`${API_URL}${path}`, { ...init, signal: controller.signal })
   } catch {
     throw new ApiError(
       controller.signal.aborted
-        ? 'Serwer nie odpowiedział w ciągu 3 minut. Sprawdź, czy backend działa.'
-        : 'Brak połączenia z serwerem aplikacji. Sprawdź, czy backend działa (port 8000).',
+        ? `Serwer nie odpowiedział w ciągu ${TIMEOUT_MINUTES} minut. Sprawdź, czy backend działa.`
+        : `Brak połączenia z serwerem aplikacji (${API_URL}). Sprawdź, czy backend działa.`,
     )
   } finally {
     clearTimeout(timer)
   }
-  if (!res.ok) {
-    const detail = await detailOf(res)
-    throw new ApiError(detail ?? messageForStatus(res.status), res.status)
+  if (!response.ok) {
+    throw new ApiError((await detailOf(response)) ?? messageForStatus(response.status), response.status)
   }
-  return res
+  return response
 }
 
 async function json<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await request(path, init)
-  return (await res.json()) as T
+  return (await request(path, init)).json() as Promise<T>
 }
 
-function send<T>(path: string, method: string, body: unknown): Promise<T> {
-  return json<T>(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+function jsonInit(method: string, body: unknown): RequestInit {
+  return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
 }
 
-// --- typy ----------------------------------------------------------------------------------
+const sendJson = <T>(path: string, method: string, body: unknown) => json<T>(path, jsonInit(method, body))
+
+/** FormData bez pustych pól — backend traktuje brak pola jako „nie podano”. */
+function formData(fields: Record<string, string | Blob | null | undefined>): FormData {
+  const form = new FormData()
+  for (const [name, value] of Object.entries(fields)) {
+    if (value instanceof Blob) form.append(name, value)
+    else if (value?.trim()) form.append(name, value.trim())
+  }
+  return form
+}
+
+const postForm = <T>(path: string, fields: Record<string, string | Blob | null | undefined>) =>
+  json<T>(path, { method: 'POST', body: formData(fields) })
+
+/** Dane słownikowe pobierane raz na sesję (nieudane pobranie można ponowić). */
+function cached<T>(load: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | null = null
+  return () =>
+    (pending ??= load().catch((error: unknown) => {
+      pending = null
+      throw error
+    }))
+}
+
+// --- typy ------------------------------------------------------------------------------------------
 
 export type CaseStatus =
   | 'brak_dzialan'
@@ -83,28 +105,34 @@ export type CaseStatus =
   | 'przygotowana_odpowiedz'
   | 'odpowiedz_wyslana'
 
-export const STATUS_LABELS: Record<CaseStatus, string> = {
-  brak_dzialan: 'Brak działań',
-  zapytania_wyslane: 'Zapytania wysłane do wydziałów',
-  kwerenda: 'Kwerenda (termin przedłużony)',
-  doprecyzowanie: 'Wezwanie do doprecyzowania',
-  odpowiedz_w_przygotowaniu: 'Odpowiedź w przygotowaniu',
-  przygotowana_odpowiedz: 'Przygotowana odpowiedź',
-  odpowiedz_wyslana: 'Odpowiedź wysłana',
+export type Urgency = 'overdue' | 'today' | 'tomorrow' | 'soon' | 'normal' | 'done'
+export type LetterKind = 'odpowiedz' | 'nie_dysponent' | 'kwerenda' | 'doprecyzowanie'
+export type DocumentKind = LetterKind | 'wniosek'
+export type DeptStatus = 'oczekuje' | 'odpowiedzial' | 'uszczegolowienie'
+
+export type AppConfig = {
+  case_number_prefix: string
+  max_upload_mb: number
+  request_extensions: string[]
+  knowledge_extensions: string[]
+  spreadsheet_extensions: string[]
+  answer_days: number
+  soon_days: number
+  clarification_reply_days: number
+  clarification_deadline_days: number
+  model: string
+  llm_enabled: boolean
+  offline_mode: boolean
 }
 
-/** Krótkie etykiety do kolumny rejestru. */
-export const STATUS_SHORT: Record<CaseStatus, string> = {
-  brak_dzialan: 'Brak działań',
-  zapytania_wyslane: 'Zapytania wysłane',
-  kwerenda: 'Kwerenda',
-  doprecyzowanie: 'Doprecyzowanie',
-  odpowiedz_w_przygotowaniu: 'W przygotowaniu',
-  przygotowana_odpowiedz: 'Przygotowana',
-  odpowiedz_wyslana: 'Wysłana',
+export type DeadlineSuggestion = {
+  received_date: string
+  deadline_date: string
+  max_extended_deadline: string
+  days_remaining: number
+  urgency: Urgency
+  note: string | null
 }
-
-export type Health ={ status: string; offline_mode: boolean; model: string; llm_enabled: boolean }
 
 export type ParsedRequest = {
   wnioskodawca: string | null
@@ -132,8 +160,6 @@ export type SimilarCase = {
   score: number | null
 }
 
-export type DepartmentSuggestion = { code: string; name: string; reason: string }
-
 export type IntakeAnalysis = {
   intake_id: number
   filename: string
@@ -144,25 +170,16 @@ export type IntakeAnalysis = {
     /** Jakość odczytu 0–1; poniżej 0,5 skan jest nieczytelny (np. pismo odręczne). */
     quality: number
     warning: string | null
-    manual_text_used?: boolean
+    manual_text_used: boolean
   }
   llm_used: boolean
   parsed_request: ParsedRequest
   similar_cases: SimilarCase[]
-  suggested_departments: DepartmentSuggestion[]
+  suggested_departments: { code: string; name: string; reason: string }[]
   suggested_external_entities: { id: number; name: string; reason: string }[]
-  suggested_deadline: {
-    received_date: string
-    deadline_date: string
-    max_extended_deadline: string
-    days_remaining: number
-    note: string | null
-  } | null
-  initial_status: string
+  suggested_deadline: DeadlineSuggestion
   text_preview: string
 }
-
-export type Urgency = 'overdue' | 'today' | 'tomorrow' | 'soon' | 'normal' | 'done'
 
 export type CaseItem = {
   id: number
@@ -185,7 +202,6 @@ export type CaseItem = {
   deadline_note: string | null
   /** Termin 14-dniowy przed przedłużeniem. */
   original_deadline_date: string | null
-  /** O ile dni przedłużono termin (kwerenda / doprecyzowanie). */
   extension_days: number
   /** Najpóźniejszy dopuszczalny termin: 2 miesiące od wpływu (art. 13 ust. 2 u.d.i.p.). */
   max_deadline_date: string | null
@@ -195,8 +211,6 @@ export type CaseItem = {
   dept_clarification: string[]
   urgency: Urgency
 }
-
-export type DeptStatus = 'oczekuje' | 'odpowiedzial' | 'uszczegolowienie'
 
 export type DepartmentStatus = {
   code: string
@@ -221,9 +235,11 @@ export type AnonymizationCandidate = {
   source: string
 }
 
+export type AnonymizationItem = Pick<AnonymizationCandidate, 'start' | 'end' | 'mask' | 'active'>
+
 export type Draft = {
   id: number
-  kind: string
+  kind: LetterKind
   draft_text: string
   anonymization_candidates: AnonymizationCandidate[]
   final_text: string | null
@@ -232,14 +248,24 @@ export type Draft = {
   created_at: string
 }
 
+export type CaseDocument = {
+  id: number
+  kind: DocumentKind
+  filename: string | null
+  text: string
+  document_date: string | null
+}
+
+export type DepartmentReply = { id: number; department: string | null; filename: string | null; text: string; created_at: string }
+
 export type CaseDetail = CaseItem & {
   applicant_contact: string | null
   request_text: string | null
   parsed_request: ParsedRequest | null
   response_text: string | null
   department_status: DepartmentStatus[]
-  documents: { id: number; kind: string; filename: string | null; text: string; document_date: string | null }[]
-  department_replies: { id: number; department: string | null; filename: string | null; text: string; created_at: string }[]
+  documents: CaseDocument[]
+  department_replies: DepartmentReply[]
   drafts: Draft[]
   events: { event: string; detail: string | null; created_at: string }[]
 }
@@ -247,33 +273,13 @@ export type CaseDetail = CaseItem & {
 export type DraftResult = {
   case_id: number
   status: CaseStatus
-  kind: string
+  kind: LetterKind
   deadline_date: string | null
   warning: string | null
   draft_id: number
   draft_text: string
   llm_used: boolean
   anonymization_candidates: AnonymizationCandidate[]
-}
-
-export type Department = { code: string; name: string; keywords: string; is_active: boolean }
-export type ExternalEntity = { id: number; name: string; name_genitive: string; contact: string; keywords: string; is_active: boolean }
-export type Rule = { id: number; title: string; source: string; content: string; is_active: boolean; created_at: string; updated_at: string }
-export type Category = { id: number; name: string; legal_basis: string; regex: string | null; mask: string; is_active: boolean }
-
-// --- wywołania -----------------------------------------------------------------------------
-
-export const getHealth = () => json<Health>('/')
-
-export type UploadInput = { file: File; receivedAt: string; manualText?: string }
-
-/** POST /api/intake/analyze — niczego nie rejestruje; sprawa powstaje dopiero po zatwierdzeniu przez urzędnika. */
-export function analyzeRequest({ file, receivedAt, manualText }: UploadInput): Promise<IntakeAnalysis> {
-  const body = new FormData()
-  body.append('file', file)
-  body.append('received_at', receivedAt)
-  if (manualText?.trim()) body.append('manual_text', manualText.trim())
-  return json<IntakeAnalysis>('/api/intake/analyze', { method: 'POST', body })
 }
 
 export type RegisterInput = {
@@ -299,98 +305,107 @@ export type RegisterResult = {
   request_templates: Record<string, string>
 }
 
-export const registerCase = (input: RegisterInput) => send<RegisterResult>('/api/cases/register', 'POST', input)
+export type Department = { code: string; name: string; keywords: string; is_active: boolean }
+export type ExternalEntity = { id: number; name: string; name_genitive: string; contact: string; keywords: string; is_active: boolean }
+export type Rule = { id: number; title: string; source: string; content: string; is_active: boolean }
+export type Category = { id: number; name: string; legal_basis: string; regex: string | null; mask: string; is_active: boolean }
+export type ImportSummary = { imported: number; updated: number; skipped: number; warnings: string[] }
 
-export function listCases(params: { year?: number; q?: string }): Promise<CaseItem[]> {
-  const qs = new URLSearchParams()
-  if (params.year) qs.set('year', String(params.year))
-  if (params.q?.trim()) qs.set('q', params.q.trim())
-  return json<CaseItem[]>(`/api/cases?${qs}`)
+// --- system ------------------------------------------------------------------------------------------
+
+export const getConfig = () => json<AppConfig>('/api/config')
+
+export const previewDeadline = (received: string) =>
+  json<DeadlineSuggestion>(`/api/deadlines/preview?${new URLSearchParams({ received })}`)
+
+export const listNonWorkingDays = (from: string, to: string) =>
+  json<string[]>(`/api/deadlines/non-working-days?${new URLSearchParams({ from, to })}`)
+
+// --- wnioski i sprawy ------------------------------------------------------------------------------
+
+/** Analiza niczego nie rejestruje — sprawa powstaje dopiero po zatwierdzeniu danych przez urzędnika. */
+export const analyzeRequest = (file: File, receivedAt: string, manualText?: string) =>
+  postForm<IntakeAnalysis>('/api/intake/analyze', { file, received_at: receivedAt, manual_text: manualText })
+
+export const registerCase = (input: RegisterInput) => sendJson<RegisterResult>('/api/cases/register', 'POST', input)
+
+export function listCases(filters: { year?: number; query?: string; openOnly?: boolean } = {}): Promise<CaseItem[]> {
+  const params = new URLSearchParams()
+  if (filters.year) params.set('year', String(filters.year))
+  if (filters.query?.trim()) params.set('q', filters.query.trim())
+  if (filters.openOnly) params.set('open_only', 'true')
+  return json<CaseItem[]>(`/api/cases?${params}`)
 }
 
 export const listYears = () => json<number[]>('/api/cases/years')
 export const getCase = (id: number) => json<CaseDetail>(`/api/cases/${id}`)
 
-export const updateStatus = (id: number, status: CaseStatus, deadline_date?: string | null) =>
-  send<{ case_id: number; status: CaseStatus; deadline_date: string | null }>(`/api/cases/${id}/status`, 'PATCH', {
-    status,
-    deadline_date: deadline_date || null,
-  })
+export const updateStatus = (id: number, status: CaseStatus, deadline: string | null) =>
+  sendJson<{ case_id: number; status: CaseStatus }>(`/api/cases/${id}/status`, 'PATCH', { status, deadline_date: deadline || null })
 
-export function departmentReply(id: number, input: { file?: File | null; text?: string; department?: string }) {
-  const body = new FormData()
-  if (input.file) body.append('file', input.file)
-  if (input.text?.trim()) body.append('reply_text', input.text.trim())
-  if (input.department) body.append('department', input.department)
-  return json<DraftResult>(`/api/cases/${id}/department-reply`, { method: 'POST', body })
+export const departmentReply = (id: number, reply: { file: File | null; text: string; department: string }) =>
+  postForm<DraftResult>(`/api/cases/${id}/department-reply`, { file: reply.file, reply_text: reply.text, department: reply.department })
+
+export type LetterInput = {
+  kind: LetterKind
+  new_deadline?: string | null
+  external_entity_id?: number | null
+  department?: string | null
+  details?: string | null
 }
 
-export type LetterKind = 'odpowiedz' | 'nie_dysponent' | 'kwerenda' | 'doprecyzowanie'
-
-export const createLetter = (
-  id: number,
-  input: { kind: LetterKind; new_deadline?: string | null; external_entity_id?: number | null; department?: string | null; details?: string | null },
-) => send<DraftResult>(`/api/cases/${id}/letter`, 'POST', input)
+export const createLetter = (id: number, input: LetterInput) => sendJson<DraftResult>(`/api/cases/${id}/letter`, 'POST', input)
 
 export const addCaseDepartment = (id: number, code: string) =>
-  send<DepartmentStatus[]>(`/api/cases/${id}/departments`, 'POST', { code })
+  sendJson<DepartmentStatus[]>(`/api/cases/${id}/departments`, 'POST', { code })
 
 export const setDepartmentStatus = (id: number, code: string, status: DeptStatus) =>
-  send<DepartmentStatus[]>(`/api/cases/${id}/departments/${encodeURIComponent(code)}`, 'PATCH', { status })
+  sendJson<DepartmentStatus[]>(`/api/cases/${id}/departments/${encodeURIComponent(code)}`, 'PATCH', { status })
 
 export const requestClarification = (id: number, code: string, details: string) =>
-  send<{ code: string; text: string; departments: DepartmentStatus[] }>(
+  sendJson<{ code: string; text: string; departments: DepartmentStatus[] }>(
     `/api/cases/${id}/departments/${encodeURIComponent(code)}/clarification`,
     'POST',
-    { details: details || null },
+    { details: details.trim() || null },
   )
 
-export const anonymizePreview =(text: string, knownPeople: string[]) =>
-  send<AnonymizationCandidate[]>('/api/response/anonymize-preview', 'POST', { text, known_people: knownPeople })
+// --- pisma i anonimizacja ---------------------------------------------------------------------------
 
-/** Zwraca plik pisma (DOCX/PDF) z nałożonymi anonimizacjami i nazwę pliku. */
+export const anonymizePreview = (text: string, knownPeople: string[]) =>
+  sendJson<AnonymizationCandidate[]>('/api/response/anonymize-preview', 'POST', { text, known_people: knownPeople })
+
+/** Plik pisma (DOCX/PDF) z nałożonymi anonimizacjami i nazwą pliku z nagłówka odpowiedzi. */
 export async function generateDocument(input: {
   draft_id: number
   content: string
   format: 'docx' | 'pdf'
-  anonymization_items: { start: number; end: number; mask: string; active: boolean }[]
+  anonymization_items: AnonymizationItem[]
 }): Promise<{ blob: Blob; filename: string }> {
-  const res = await request('/api/response/generate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  })
-  const disposition = res.headers.get('Content-Disposition') ?? ''
-  const match = /filename="([^"]+)"/.exec(disposition)
-  return { blob: await res.blob(), filename: match?.[1] ?? `odpowiedz.${input.format}` }
+  const response = await request('/api/response/generate', jsonInit('POST', input))
+  const filename = /filename="([^"]+)"/.exec(response.headers.get('Content-Disposition') ?? '')?.[1]
+  return { blob: await response.blob(), filename: filename ?? `odpowiedz.${input.format}` }
 }
 
-export const markSent = (case_id: number, draft_id: number, final_content: string) =>
-  send<{ case_id: number; status: CaseStatus; response_date: string }>('/api/response/send', 'POST', {
-    case_id,
-    draft_id,
-    final_content,
+/** Odnotowuje wysłanie pisma; zaznaczone fragmenty maskuje serwer przed zapisem w aktach i archiwum. */
+export const markSent = (caseId: number, draftId: number, content: string, items: AnonymizationItem[]) =>
+  sendJson<{ case_id: number; status: CaseStatus; response_date: string }>('/api/response/send', 'POST', {
+    case_id: caseId,
+    draft_id: draftId,
+    final_content: content,
+    anonymization_items: items,
   })
 
-export const listDepartments = () => json<Department[]>('/api/knowledge/departments')
-export const listExternalEntities = () => json<ExternalEntity[]>('/api/knowledge/external-entities')
+// --- baza wiedzy -------------------------------------------------------------------------------------
+
+export const listDepartments = cached(() => json<Department[]>('/api/knowledge/departments'))
+export const listExternalEntities = cached(() => json<ExternalEntity[]>('/api/knowledge/external-entities'))
 export const listRules = () => json<Rule[]>('/api/knowledge/rules')
 export const listCategories = () => json<Category[]>('/api/knowledge/anonymization-categories')
-export const setRuleActive = (id: number, is_active: boolean) => send<Rule>(`/api/knowledge/rules/${id}`, 'PUT', { is_active })
 
-export function importExcel(file: File) {
-  const body = new FormData()
-  body.append('file', file)
-  return json<{ imported: number; updated: number; skipped: number; warnings: string[] }>('/api/knowledge/cases/import-excel', {
-    method: 'POST',
-    body,
-  })
-}
+export const setRuleActive = (id: number, isActive: boolean) =>
+  sendJson<Rule>(`/api/knowledge/rules/${id}`, 'PUT', { is_active: isActive })
 
-export function importRuleDocument(file: File, title: string, source: string) {
-  const body = new FormData()
-  body.append('file', file)
-  if (title.trim()) body.append('title', title.trim())
-  if (source.trim()) body.append('source', source.trim())
-  return json<Rule[]>('/api/knowledge/rules/import-document', { method: 'POST', body })
-}
+export const importExcel = (file: File) => postForm<ImportSummary>('/api/knowledge/cases/import-excel', { file })
+
+export const importRuleDocument = (file: File, title: string, source: string) =>
+  postForm<Rule[]>('/api/knowledge/rules/import-document', { file, title, source })

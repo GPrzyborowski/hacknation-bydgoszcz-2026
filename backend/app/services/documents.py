@@ -1,130 +1,144 @@
-"""Eksport projektu odpowiedzi do DOCX i PDF. Zamaskowane fragmenty są zastępowane tekstem maski
-(oryginalne dane NIE trafiają do pliku) i dodatkowo oznaczane czarnym tłem."""
+"""Eksport pisma do DOCX i PDF w układzie pism BKS UMB.
+
+Zamaskowane fragmenty trafiają do pliku wyłącznie jako tekst maski (oryginalne dane nie są zapisywane)
+i są dodatkowo oznaczone czarnym tłem.
+"""
 import io
 from datetime import date
-from pathlib import Path
+
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.shared import Pt, RGBColor
+from fpdf import FPDF
 
 import config
-from services.anonymization import mask_spans
-from services.deadlines import format_pl
+from services.deadlines import format_long
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PDF_MIME = "application/pdf"
+DRAFT_FOOTER = "Projekt pisma przygotowany z pomocą Asystenta UDIP — wymaga weryfikacji i podpisu urzędnika."
+LETTERHEAD_TITLE_LINES = 2
+
+Segments = tuple[tuple[str, bool], ...]
+
+# Bez czcionki TTF fpdf2 zna tylko Latin-1, więc polskie znaki trzeba wtedy transliterować.
+_UNICODE_FONT = config.PDF_FONT_PATH.exists()
+_UNICODE_BOLD_FONT = _UNICODE_FONT and config.PDF_FONT_BOLD_PATH.exists()
+_ASCII_TRANSLATION = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ„”–—", "acelnoszzACELNOSZZ\"\"--")
 
 
-def _header(case: dict) -> tuple[str, str]:
-    """„Bydgoszcz, dnia 14 stycznia 2026 r.” i znak sprawy — jak w pismach BKS UMB."""
-    place_date = f"{config.OFFICE_CITY}, dnia {format_pl(date.today())} r."
-    return place_date, case.get("case_number") or "—"
+def _place_and_date() -> str:
+    return f"{config.OFFICE_CITY}, dnia {format_long(date.today())} r."
 
 
-def build_docx(case: dict, text: str, items: list[dict]) -> bytes:
-    from docx import Document
-    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
-    from docx.shared import Pt, RGBColor
+def _lines(segments: Segments) -> list[list[tuple[str, bool]]]:
+    """Dzieli fragmenty pisma na wiersze (maski nigdy nie zawierają końca wiersza)."""
+    lines: list[list[tuple[str, bool]]] = [[]]
+    for text, masked in segments:
+        if masked:
+            lines[-1].append((text, True))
+            continue
+        for index, part in enumerate(text.split("\n")):
+            if index:
+                lines.append([])
+            if part:
+                lines[-1].append((part, False))
+    return lines
 
-    doc = Document()
-    style = doc.styles["Normal"]
-    style.font.name = "Arial"
-    style.font.size = Pt(11)
 
-    for i, line in enumerate(config.OFFICE_LETTERHEAD):
-        head = doc.add_paragraph()
-        head.paragraph_format.space_after = Pt(0)
-        run = head.add_run(line)
-        run.bold = i == 0
-        run.font.size = Pt(11 if i < 2 else 8)
-    doc.add_paragraph()
-    place_date, case_number = _header(case)
-    p = doc.add_paragraph(place_date)
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    doc.add_paragraph(case_number)
-    doc.add_paragraph()
+def build_docx(case_number: str, segments: Segments) -> bytes:
+    document = Document()
+    normal = document.styles["Normal"]
+    normal.font.name = "Arial"
+    normal.font.size = Pt(11)
 
-    for line in text.split("\n"):
-        para = doc.add_paragraph()
-        para.paragraph_format.space_after = Pt(4)
-        for chunk, masked in mask_spans(line, items):
-            run = para.add_run(chunk)
+    for index, line in enumerate(config.OFFICE_LETTERHEAD):
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.space_after = Pt(0)
+        run = paragraph.add_run(line)
+        run.bold = index == 0
+        run.font.size = Pt(11 if index < LETTERHEAD_TITLE_LINES else 8)
+    document.add_paragraph()
+    document.add_paragraph(_place_and_date()).alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    document.add_paragraph(case_number)
+    document.add_paragraph()
+
+    for line in _lines(segments):
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.space_after = Pt(4)
+        for text, masked in line:
+            run = paragraph.add_run(text)
             if masked:
                 run.font.highlight_color = WD_COLOR_INDEX.BLACK
                 run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-    doc.add_paragraph()
+
+    document.add_paragraph()
     for line in config.OFFICE_SIGNATURE:
-        sig = doc.add_paragraph(line)
-        sig.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        sig.paragraph_format.space_after = Pt(0)
-    doc.add_paragraph()
-    note = doc.add_paragraph("Projekt pisma przygotowany z pomocą Asystenta UDIP — wymaga weryfikacji i podpisu urzędnika.")
-    note.runs[0].font.size = Pt(8)
-    note.runs[0].italic = True
+        signature = document.add_paragraph(line)
+        signature.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        signature.paragraph_format.space_after = Pt(0)
+    document.add_paragraph()
+    footer = document.add_paragraph(DRAFT_FOOTER).runs[0]
+    footer.font.size = Pt(8)
+    footer.italic = True
 
-    buf = io.BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 
-def build_pdf(case: dict, text: str, items: list[dict]) -> bytes:
-    from fpdf import FPDF
-
+def build_pdf(case_number: str, segments: Segments) -> bytes:
     pdf = FPDF(format="A4")
     pdf.set_margins(25, 20, 20)
     pdf.set_auto_page_break(True, margin=20)
     pdf.add_page()
 
-    font, has_bold = "Helvetica", True
-    if Path(config.PDF_FONT_PATH).exists():
-        pdf.add_font("DejaVu", "", config.PDF_FONT_PATH)
-        has_bold = Path(config.PDF_FONT_BOLD_PATH).exists()
-        if has_bold:
-            pdf.add_font("DejaVu", "B", config.PDF_FONT_BOLD_PATH)
+    font = "Helvetica"
+    if _UNICODE_FONT:
         font = "DejaVu"
-    else:
-        # Bez czcionki TTF polskie znaki zostałyby utracone — transliterujemy, żeby PDF się wygenerował.
-        text = _ascii(text)
+        pdf.add_font(font, "", str(config.PDF_FONT_PATH))
+        if _UNICODE_BOLD_FONT:
+            pdf.add_font(font, "B", str(config.PDF_FONT_BOLD_PATH))
 
-    def t(value: str) -> str:
-        return value if font != "Helvetica" else _ascii(value)
+    def printable(text: str) -> str:
+        if _UNICODE_FONT:
+            return text
+        return text.translate(_ASCII_TRANSLATION).encode("latin-1", "replace").decode("latin-1")
 
-    for i, line in enumerate(config.OFFICE_LETTERHEAD):
-        pdf.set_font(font, "B" if i == 0 and has_bold else "", size=11 if i < 2 else 8)
-        pdf.cell(0, 5 if i < 2 else 4, t(line), new_x="LMARGIN", new_y="NEXT")
+    for index, line in enumerate(config.OFFICE_LETTERHEAD):
+        title = index < LETTERHEAD_TITLE_LINES
+        bold = index == 0 and (_UNICODE_BOLD_FONT or not _UNICODE_FONT)
+        pdf.set_font(font, "B" if bold else "", size=11 if title else 8)
+        pdf.cell(0, 5 if title else 4, printable(line), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
-    place_date, case_number = _header(case)
     pdf.set_font(font, size=11)
-    pdf.cell(0, 6, t(place_date), align="R", new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, t(case_number), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, printable(_place_and_date()), align="R", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, printable(case_number), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(6)
 
-    line_h = 6
-    for line in text.split("\n"):
-        if not line.strip():
-            pdf.ln(line_h)
+    line_height = 6
+    for line in _lines(segments):
+        if not any(text.strip() for text, _ in line):
+            pdf.ln(line_height)
             continue
-        for chunk, masked in mask_spans(line, items):
-            if masked:
-                # Maska jako czarny blok z białym napisem; cell nie łamie wiersza, więc przenosimy ręcznie.
-                width = pdf.get_string_width(chunk) + 2
-                if pdf.get_x() + width > pdf.w - pdf.r_margin:
-                    pdf.ln(line_h)
-                pdf.set_fill_color(0, 0, 0)
-                pdf.set_text_color(255, 255, 255)
-                pdf.cell(width, line_h, chunk, fill=True)
-                pdf.set_text_color(0, 0, 0)
-            else:
-                pdf.write(line_h, chunk)
-        pdf.ln(line_h)
+        for text, masked in line:
+            if not masked:
+                pdf.write(line_height, printable(text))
+                continue
+            # Maska to czarny blok z białym napisem; cell() nie łamie wiersza, więc przenosimy go ręcznie.
+            width = pdf.get_string_width(printable(text)) + 2
+            if pdf.get_x() + width > pdf.w - pdf.r_margin:
+                pdf.ln(line_height)
+            pdf.set_fill_color(0, 0, 0)
+            pdf.set_text_color(255, 255, 255)
+            pdf.cell(width, line_height, printable(text), fill=True)
+            pdf.set_text_color(0, 0, 0)
+        pdf.ln(line_height)
 
     pdf.ln(4)
     for line in config.OFFICE_SIGNATURE:
-        pdf.cell(0, 6, t(line), align="R", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, printable(line), align="R", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
     pdf.set_font(font, size=7)
-    note = "Projekt pisma przygotowany z pomocą Asystenta UDIP — wymaga weryfikacji i podpisu urzędnika."
-    pdf.multi_cell(0, 4, note if font != "Helvetica" else _ascii(note))
+    pdf.multi_cell(0, 4, printable(DRAFT_FOOTER))
     return bytes(pdf.output())
-
-
-def _ascii(text: str) -> str:
-    table = str.maketrans("ąćęłńóśźżĄĆĘŁŃÓŚŹŻ„”–—", "acelnoszzACELNOSZZ\"\"--")
-    return text.translate(table).encode("latin-1", "replace").decode("latin-1")

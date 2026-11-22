@@ -1,35 +1,49 @@
 """Modele żądań i odpowiedzi API (widoczne w Swagger UI: /docs)."""
 from datetime import date
-from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
-class CaseStatus(str, Enum):
-    brak_dzialan = "brak_dzialan"
-    zapytania_wyslane = "zapytania_wyslane"
-    kwerenda = "kwerenda"
-    doprecyzowanie = "doprecyzowanie"
-    odpowiedz_w_przygotowaniu = "odpowiedz_w_przygotowaniu"
-    przygotowana_odpowiedz = "przygotowana_odpowiedz"
-    odpowiedz_wyslana = "odpowiedz_wyslana"
+from domain import CaseStatus, DeptStatus, DocumentKind, LetterKind, ProcedureMode, Urgency
+from seed_data import MASK
 
 
-ProcedureMode = Literal["zwykla", "bip", "przetworzona", "odmowa", "nie_dysponent"]
-
-
-# --- health -------------------------------------------------------------------------------
+# --- system --------------------------------------------------------------------------------------
 
 class Health(BaseModel):
     status: str
     offline_mode: bool
     model: str
     llm_enabled: bool
-    fts5: bool
 
 
-# --- intake -------------------------------------------------------------------------------
+class AppConfig(BaseModel):
+    """Ustawienia, których potrzebuje interfejs, żeby nie powielać konfiguracji backendu."""
+
+    case_number_prefix: str
+    max_upload_mb: int
+    request_extensions: list[str]
+    knowledge_extensions: list[str]
+    spreadsheet_extensions: list[str]
+    answer_days: int
+    soon_days: int = Field(description="Termin w ciągu tylu dni jest oznaczany jako zbliżający się (urgency = soon).")
+    clarification_reply_days: int
+    clarification_deadline_days: int = Field(description="Domyślny nowy termin przy wezwaniu do doprecyzowania.")
+    model: str
+    llm_enabled: bool
+    offline_mode: bool
+
+
+class DeadlineSuggestion(BaseModel):
+    received_date: str
+    deadline_date: str
+    max_extended_deadline: str
+    days_remaining: int
+    urgency: Urgency
+    note: str | None = Field(None, description="Ostrzeżenie, gdy termin wypada w dzień wolny.")
+
+
+# --- przyjęcie wniosku -----------------------------------------------------------------------------
 
 class ParsedRequest(BaseModel):
     wnioskodawca: str | None = None
@@ -48,7 +62,7 @@ class ExtractionInfo(BaseModel):
     has_text_layer: bool
     used_ocr: bool
     text_length: int
-    quality: float = Field(1.0, description="Jakość odczytu 0–1 (udział rozpoznanych słów).")
+    quality: float = Field(description="Jakość odczytu 0–1 (udział rozpoznanych słów).")
     warning: str | None = Field(None, description="Np. pismo odręczne nieczytelne dla OCR — wpisz treść ręcznie.")
     manual_text_used: bool = False
 
@@ -60,10 +74,10 @@ class SimilarCase(BaseModel):
     response_date: str | None
     applicant: str
     subject: str
-    procedure_mode: str
+    procedure_mode: ProcedureMode
     departments: list[str]
     response_text: str
-    score: float | None = Field(None, description="Trafność wyszukiwania (BM25) — im wyżej, tym bardziej podobna.")
+    score: float | None = Field(None, description="Trafność (BM25) — im wyżej, tym bardziej podobna sprawa.")
 
 
 class DepartmentSuggestion(BaseModel):
@@ -78,14 +92,6 @@ class ExternalEntitySuggestion(BaseModel):
     reason: str
 
 
-class DeadlineSuggestion(BaseModel):
-    received_date: str
-    deadline_date: str
-    max_extended_deadline: str
-    days_remaining: int
-    note: str | None = Field(None, description="Ostrzeżenie, gdy termin wypada w dzień wolny.")
-
-
 class IntakeResponse(BaseModel):
     intake_id: int = Field(description="Przekaż do POST /api/cases/register, aby powiązać sprawę z treścią wniosku.")
     filename: str
@@ -95,14 +101,13 @@ class IntakeResponse(BaseModel):
     similar_cases: list[SimilarCase]
     suggested_departments: list[DepartmentSuggestion]
     suggested_external_entities: list[ExternalEntitySuggestion] = Field(
-        [], description="Podmioty spoza UMB, które mogą być dysponentem informacji (pismo „nie_dysponent”)."
+        description="Podmioty spoza UMB, które mogą być dysponentem informacji (pismo „nie_dysponent”)."
     )
-    suggested_deadline: DeadlineSuggestion | None = None
-    initial_status: CaseStatus = CaseStatus.brak_dzialan
-    text_preview: str = Field("", description="Początek wyodrębnionego tekstu (do podglądu i weryfikacji OCR).")
+    suggested_deadline: DeadlineSuggestion
+    text_preview: str = Field(description="Początek wyodrębnionego tekstu (do weryfikacji odczytu).")
 
 
-# --- cases --------------------------------------------------------------------------------
+# --- rejestr spraw -----------------------------------------------------------------------------------
 
 class CaseListItem(BaseModel):
     id: int
@@ -116,7 +121,7 @@ class CaseListItem(BaseModel):
     response_date: str | None = None
     date_parse_warning: str | None = None
     status: CaseStatus
-    procedure_mode: str = "zwykla"
+    procedure_mode: ProcedureMode = ProcedureMode.zwykla
     departments: list[str] = []
     initials: str | None = Field(None, description="Osoba odpowiedzialna / inicjały (kolumna rejestru UMB).")
     notes: str | None = None
@@ -130,15 +135,13 @@ class CaseListItem(BaseModel):
     dept_answered: int = 0
     dept_waiting: list[str] = []
     dept_clarification: list[str] = []
-    urgency: Literal["overdue", "today", "tomorrow", "soon", "normal", "done"] = Field(
-        description="Podświetlenie w kalendarzu: overdue (po terminie), today, tomorrow, soon (≤3 dni), normal, done."
-    )
+    urgency: Urgency = Field(description="Podświetlenie: overdue (po terminie), today, tomorrow, soon (≤3 dni), normal, done.")
 
 
 class DepartmentStatusOut(BaseModel):
     code: str
     name: str
-    status: Literal["oczekuje", "odpowiedzial", "uszczegolowienie"]
+    status: DeptStatus
     status_label: str
     requested_at: str | None
     answered_at: str | None
@@ -151,7 +154,7 @@ class DepartmentAdd(BaseModel):
 
 
 class DepartmentStatusUpdate(BaseModel):
-    status: Literal["oczekuje", "odpowiedzial", "uszczegolowienie"]
+    status: DeptStatus
     note: str | None = None
 
 
@@ -173,11 +176,23 @@ class DepartmentReplyOut(BaseModel):
     created_at: str
 
 
+class AnonymizationCandidate(BaseModel):
+    id: int
+    quote: str
+    category: str
+    reason: str
+    start: int
+    end: int
+    mask: str
+    active: bool
+    source: str
+
+
 class DraftOut(BaseModel):
     id: int
-    kind: str = "odpowiedz"
+    kind: LetterKind
     draft_text: str
-    anonymization_candidates: list[dict]
+    anonymization_candidates: list[AnonymizationCandidate]
     final_text: str | None
     generated_format: str | None
     llm_used: bool
@@ -192,7 +207,7 @@ class CaseEvent(BaseModel):
 
 class CaseDocument(BaseModel):
     id: int
-    kind: str = Field(description="wniosek / odpowiedz / kwerenda / doprecyzowanie / nie_dysponent")
+    kind: DocumentKind
     filename: str | None
     text: str
     document_date: str | None
@@ -202,7 +217,7 @@ class CaseDocument(BaseModel):
 class CaseDetail(CaseListItem):
     applicant_contact: str | None = None
     request_text: str | None = None
-    parsed_request: dict | None = None
+    parsed_request: ParsedRequest | None = None
     response_text: str | None = None
     department_status: list[DepartmentStatusOut] = []
     documents: list[CaseDocument] = []
@@ -218,10 +233,10 @@ class RegisterCase(BaseModel):
     applicant_contact: str | None = None
     subject: str
     received_date: date
-    deadline_date: date | None = Field(None, description="Puste = 14 dni od wpływu z przesunięciem na dzień roboczy.")
+    deadline_date: date | None = Field(None, description="Puste = 14 dni od daty wpływu.")
     departments: list[str] = []
     initials: str | None = None
-    procedure_mode: ProcedureMode = "zwykla"
+    procedure_mode: ProcedureMode = ProcedureMode.zwykla
     notes: str | None = None
     intake_id: int | None = None
     parsed_request: ParsedRequest | None = None
@@ -238,7 +253,6 @@ class RegisterResponse(BaseModel):
 
 
 class UpdateCase(BaseModel):
-    """Edycja danych sprawy (wszystkie pola opcjonalne)."""
     case_number: str | None = None
     applicant: str | None = None
     applicant_contact: str | None = None
@@ -267,25 +281,6 @@ class StatusResponse(BaseModel):
     days_remaining: int | None = None
 
 
-class AnonymizationCandidate(BaseModel):
-    id: int
-    quote: str
-    category: str
-    reason: str
-    start: int
-    end: int
-    mask: str
-    active: bool
-    source: str
-
-
-class LetterKind(str, Enum):
-    odpowiedz = "odpowiedz"
-    nie_dysponent = "nie_dysponent"
-    kwerenda = "kwerenda"
-    doprecyzowanie = "doprecyzowanie"
-
-
 class LetterRequest(BaseModel):
     kind: LetterKind
     new_deadline: date | None = Field(None, description="Kwerenda/doprecyzowanie: nowy termin (domyślnie wyliczany, maks. 2 miesiące).")
@@ -295,10 +290,10 @@ class LetterRequest(BaseModel):
     apply_status: bool = Field(True, description="Ustaw status sprawy (kwerenda/doprecyzowanie) i nowy termin.")
 
 
-class DepartmentReplyResponse(BaseModel):
+class DraftResult(BaseModel):
     case_id: int
     status: CaseStatus
-    kind: str = "odpowiedz"
+    kind: LetterKind
     deadline_date: str | None = None
     warning: str | None = None
     draft_id: int
@@ -307,12 +302,12 @@ class DepartmentReplyResponse(BaseModel):
     anonymization_candidates: list[AnonymizationCandidate]
 
 
-# --- response -----------------------------------------------------------------------------
+# --- odpowiedź i anonimizacja -------------------------------------------------------------------------
 
 class AnonymizationItem(BaseModel):
     start: int
     end: int
-    mask: str = "[ANONIMIZACJA]"
+    mask: str = MASK
     active: bool = True
 
 
@@ -326,7 +321,8 @@ class GenerateRequest(BaseModel):
 class SendRequest(BaseModel):
     case_id: int
     draft_id: int | None = None
-    final_content: str
+    final_content: str = Field(description="Treść wysłanego pisma; zaznaczone fragmenty maskuje serwer.")
+    anonymization_items: list[AnonymizationItem] = []
     response_date: date | None = None
 
 
@@ -341,7 +337,7 @@ class AnonymizePreviewRequest(BaseModel):
     known_people: list[str] = []
 
 
-# --- knowledge ----------------------------------------------------------------------------
+# --- baza wiedzy ------------------------------------------------------------------------------------
 
 class RuleIn(BaseModel):
     title: str
@@ -367,7 +363,7 @@ class CategoryIn(BaseModel):
     name: str
     legal_basis: str = ""
     regex: str | None = None
-    mask: str = "[ANONIMIZACJA]"
+    mask: str = MASK
     is_active: bool = True
 
 
@@ -390,23 +386,14 @@ class DepartmentIn(BaseModel):
     is_active: bool = True
 
 
+class DepartmentOut(DepartmentIn):
+    pass
+
+
 class DepartmentUpdate(BaseModel):
     name: str | None = None
     keywords: str | None = None
     is_active: bool | None = None
-
-
-class ManualCase(BaseModel):
-    case_number: str
-    year: int | None = None
-    applicant: str = ""
-    subject: str
-    received_date: date | None = None
-    response_date: date | None = None
-    procedure_mode: ProcedureMode = "zwykla"
-    departments: list[str] = []
-    request_text: str | None = None
-    response_text: str = ""
 
 
 class ExternalEntityIn(BaseModel):
@@ -427,6 +414,24 @@ class ExternalEntityUpdate(BaseModel):
 
 class ExternalEntityOut(ExternalEntityIn):
     id: int
+
+
+class ManualCase(BaseModel):
+    case_number: str
+    year: int | None = None
+    applicant: str = ""
+    subject: str
+    received_date: date | None = None
+    response_date: date | None = None
+    procedure_mode: ProcedureMode = ProcedureMode.zwykla
+    departments: list[str] = []
+    request_text: str | None = None
+    response_text: str = ""
+
+
+class ManualCaseOut(BaseModel):
+    id: int
+    case_number: str
 
 
 class ImportResult(BaseModel):

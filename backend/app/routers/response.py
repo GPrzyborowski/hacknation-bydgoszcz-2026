@@ -1,104 +1,89 @@
-"""Etap 4: anonimizacja, eksport DOCX/PDF i oznaczenie wysyłki (wysyłkę wykonuje urzędnik poza systemem)."""
+"""Anonimizacja, eksport pisma do DOCX/PDF i odnotowanie wysyłki (wysyła urzędnik, poza systemem)."""
 import re
 import sqlite3
-from datetime import date
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Response
 
-import db
 from db import db_dependency
-from routers.common import get_case_row
+from domain import INTERIM_LETTERS, CaseStatus, LetterKind
+from errors import BadRequest
 from schemas import AnonymizationCandidate, AnonymizePreviewRequest, GenerateRequest, SendRequest, SendResponse
-from services import anonymization, documents
+from services import anonymization, case_store, deadlines, documents, drafting
 
 router = APIRouter(prefix="/api/response", tags=["3. Odpowiedź i anonimizacja"])
 
-
-def _draft(conn: sqlite3.Connection, draft_id: int) -> sqlite3.Row:
-    row = conn.execute("SELECT * FROM response_drafts WHERE id = ?", (draft_id,)).fetchone()
-    if row is None:
-        raise HTTPException(404, f"Nie znaleziono projektu odpowiedzi o id {draft_id}.")
-    return row
+TEXT_MIME = "text/plain; charset=utf-8"
 
 
 @router.post(
     "/generate",
     response_class=Response,
-    responses={200: {"content": {documents.DOCX_MIME: {}, documents.PDF_MIME: {}, "text/plain": {}}, "description": "Plik odpowiedzi"}},
+    responses={200: {"content": {documents.DOCX_MIME: {}, documents.PDF_MIME: {}, TEXT_MIME: {}}, "description": "Plik pisma"}},
 )
 def generate(body: GenerateRequest, conn: sqlite3.Connection = Depends(db_dependency)):
-    """Nakłada zatwierdzone anonimizacje (pozycje `active: false` są pomijane), ustawia status
-    `przygotowana_odpowiedz` i zwraca plik. Oryginalne dane z zamaskowanych fragmentów nie trafiają do pliku."""
-    draft = _draft(conn, body.draft_id)
-    case = dict(get_case_row(conn, draft["case_id"]))
-    items = [i.model_dump() for i in body.anonymization_items]
-    for item in items:
-        if not (0 <= item["start"] < item["end"] <= len(body.content)):
-            raise HTTPException(400, f"Zakres anonimizacji {item['start']}–{item['end']} wykracza poza treść pisma.")
-    redacted = anonymization.apply(body.content, items)
+    """Nakłada zaznaczone anonimizacje (pozycje `active: false` są pomijane) i zwraca plik pisma. Projekt
+    odpowiedzi przechodzi w status `przygotowana_odpowiedz`; oryginalne dane z masek nie trafiają do pliku."""
+    draft = drafting.get_draft(conn, body.draft_id)
+    case = case_store.get(conn, draft["case_id"])
+    items = [item.model_dump() for item in body.anonymization_items]
+    redaction = anonymization.apply(body.content, items)
+
+    if body.format == "pdf":
+        content, media_type = documents.build_pdf(case["case_number"], redaction.segments), documents.PDF_MIME
+    elif body.format == "txt":
+        content, media_type = redaction.text.encode("utf-8"), TEXT_MIME
+    else:
+        content, media_type = documents.build_docx(case["case_number"], redaction.segments), documents.DOCX_MIME
 
     conn.execute(
         "UPDATE response_drafts SET final_text = ?, generated_format = ?, updated_at = datetime('now') WHERE id = ?",
-        (redacted, body.format, body.draft_id),
+        (redaction.text, body.format, body.draft_id),
     )
-    # Kwerenda i wezwanie do doprecyzowania to pisma w toku sprawy — status zostaje (kwerenda / doprecyzowanie).
-    if case["status"] != "odpowiedz_wyslana" and draft["kind"] in ("odpowiedz", "nie_dysponent"):
-        conn.execute("UPDATE cases SET status = 'przygotowana_odpowiedz', updated_at = datetime('now') WHERE id = ?", (case["id"],))
-    db.log_event(conn, case["id"], "wygenerowano_odpowiedz", f"format {body.format}, zanonimizowano {sum(i['active'] for i in items)} fragm.")
+    if case["status"] != CaseStatus.odpowiedz_wyslana and draft["kind"] not in INTERIM_LETTERS:
+        case_store.set_status(conn, case["id"], CaseStatus.przygotowana_odpowiedz)
+    masked = sum(item["active"] for item in items)
+    case_store.log_event(conn, case["id"], "wygenerowano_odpowiedz", f"format {body.format}, zanonimizowano {masked} fragm.")
 
-    if body.format == "pdf":
-        content, mime = documents.build_pdf(case, redacted, items), documents.PDF_MIME
-    elif body.format == "txt":
-        content, mime = redacted.encode("utf-8"), "text/plain; charset=utf-8"
-    else:
-        content, mime = documents.build_docx(case, redacted, items), documents.DOCX_MIME
-
-    safe = re.sub(r"[^\w.-]+", "_", case["case_number"]) or "odpowiedz"
-    filename = f"odpowiedz_{safe}.{body.format}"
+    safe_case_number = re.sub(r"[^\w.-]+", "_", case["case_number"]) or "odpowiedz"
+    filename = f"odpowiedz_{safe_case_number}.{body.format}"
     return Response(
         content=content,
-        media_type=mime,
-        headers={
-            "Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}",
-            "Access-Control-Expose-Headers": "Content-Disposition",
-        },
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename=\"{filename}\"; filename*=UTF-8''{quote(filename)}"},
     )
 
 
 @router.post("/send", response_model=SendResponse)
 def send(body: SendRequest, conn: sqlite3.Connection = Depends(db_dependency)):
-    """Oznacza sprawę jako `odpowiedz_wyslana`, zapisuje datę i treść odpowiedzi oraz aktualizuje `cases_fts`,
-    dzięki czemu sprawa zasila archiwum podobnych spraw. System NIE wysyła pisma — robi to urzędnik."""
-    case = get_case_row(conn, body.case_id)
-    kind = "odpowiedz"
+    """Odnotowuje wysłanie pisma i zapisuje je w aktach — po zamaskowaniu zaznaczonych fragmentów. Odpowiedź
+    zamyka sprawę i zasila archiwum podobnych spraw; kwerenda i doprecyzowanie pozostawiają sprawę w toku."""
+    case = case_store.get(conn, body.case_id)
+    text = anonymization.apply(body.final_content, [item.model_dump() for item in body.anonymization_items]).text
+    kind = LetterKind.odpowiedz
     if body.draft_id is not None:
-        draft = _draft(conn, body.draft_id)
+        draft = drafting.get_draft(conn, body.draft_id)
         if draft["case_id"] != body.case_id:
-            raise HTTPException(400, "Projekt odpowiedzi należy do innej sprawy.")
+            raise BadRequest("Projekt odpowiedzi należy do innej sprawy.")
         kind = draft["kind"]
         conn.execute(
-            "UPDATE response_drafts SET final_text = ?, updated_at = datetime('now') WHERE id = ?", (body.final_content, body.draft_id)
+            "UPDATE response_drafts SET final_text = ?, updated_at = datetime('now') WHERE id = ?", (text, body.draft_id)
         )
-    response_date = (body.response_date or date.today()).isoformat()
-    conn.execute(
-        "INSERT INTO case_documents(case_id, kind, filename, text, document_date) VALUES (?, ?, NULL, ?, ?)",
-        (body.case_id, kind, body.final_content, response_date),
-    )
-    if kind in ("kwerenda", "doprecyzowanie"):
-        # Pismo w toku sprawy: zapisujemy je w aktach, sprawa pozostaje otwarta z nowym terminem.
-        db.log_event(conn, body.case_id, f"{kind}_wyslane", response_date)
+
+    response_date = (body.response_date or deadlines.today()).isoformat()
+    case_store.add_document(conn, body.case_id, kind, text, document_date=response_date)
+    if kind in INTERIM_LETTERS:
+        case_store.log_event(conn, body.case_id, f"{kind}_wyslane", response_date)
         return {"case_id": body.case_id, "status": case["status"], "response_date": response_date}
-    conn.execute(
-        "UPDATE cases SET status = 'odpowiedz_wyslana', response_date = ?, response_text = ?, updated_at = datetime('now') WHERE id = ?",
-        (response_date, body.final_content, body.case_id),
+
+    case_store.set_status(
+        conn, body.case_id, CaseStatus.odpowiedz_wyslana, response_date=response_date, response_text=text,
+        event="odpowiedz_wyslana", detail=response_date,
     )
-    db.index_case(conn, body.case_id)
-    db.log_event(conn, body.case_id, "odpowiedz_wyslana", response_date)
-    return {"case_id": body.case_id, "status": "odpowiedz_wyslana", "response_date": response_date}
+    return {"case_id": body.case_id, "status": CaseStatus.odpowiedz_wyslana, "response_date": response_date}
 
 
 @router.post("/anonymize-preview", response_model=list[AnonymizationCandidate])
 def anonymize_preview(body: AnonymizePreviewRequest, conn: sqlite3.Connection = Depends(db_dependency)):
-    """Ponowne wyliczenie kandydatów (regexy + znane osoby) po ręcznej edycji treści przez urzędnika — bez LLM."""
-    return anonymization.find_candidates(conn, body.text, None, body.known_people)
+    """Kandydaci do anonimizacji po ręcznej edycji pisma (wzorce i znane osoby, bez modelu językowego)."""
+    return anonymization.find_candidates(body.text, anonymization.load_categories(conn), known_people=body.known_people)
